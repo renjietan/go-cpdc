@@ -1,0 +1,17 @@
+{
+  "deviceTypes": [
+    "CCUAudio"
+ ],
+  "esn": "",
+  "supportedTypes": [
+    "Server",
+    "HF",
+    "MultiBandRadio",
+    "MultibandHandheld",
+    "CCU",
+    "CCUAudio",
+    "IEC",
+    "SmallHandheld",
+    "VehInter"
+  ]
+}

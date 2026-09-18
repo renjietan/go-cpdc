@@ -1,0 +1,21 @@
+{
+  "deviceTypes": ["VehInter"],
+  "esn": "",
+  "txbzName": "",
+  "txbzHash": "",
+  "nodeId": "",
+  "deviceIds": {
+    "VehInter": ""
+  },
+  "supportedTypes": [
+    "Server",
+    "HF",
+    "MultiBandRadio",
+    "MultibandHandheld",
+    "CCU",
+    "CCUAudio",
+    "IEC",
+    "SmallHandheld",
+    "VehInter"
+  ]
+}

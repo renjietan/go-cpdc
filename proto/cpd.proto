@@ -1,0 +1,281 @@
+syntax = "proto3";
+
+package cpd.v1;
+
+option go_package = "cpdc/gen/cpd/v1;cpdv1";
+
+// Packet is serialized with protobuf binary encoding and carried directly in
+// one IPv4 UDP datagram after a 4-byte Magic prefix. The serialized Packet
+// must not exceed 1396 bytes; the complete UDP payload must not exceed 1400.
+//
+// session_id and message_id are raw 16-byte UUID v4 values. They must never be
+// empty and must be rejected when their length is not exactly 16 bytes.
+//
+// A RSP or ACK copies the message_id of the NTY or REQ that triggered it.
+// Each logical message creates one message_id. Broadcast/loopback copies and
+// retransmissions of that same logical message reuse the ID and identical body;
+// a new logical message creates a new ID. message_id is only a correlation and
+// idempotency key, not a business identity or security credential.
+message Packet {
+  bytes session_id = 1;
+  bytes message_id = 2;
+
+  oneof body {
+    DiscoverNty discover_nty = 10;
+    DiscoverRsp discover_rsp = 11;
+    AuthNty auth_nty = 12;
+    AuthRsp auth_rsp = 13;
+
+    TransferStartNty transfer_start_nty = 20;
+    TransferChunkNty transfer_chunk_nty = 21;
+    TransferProgressRsp transfer_progress_rsp = 22;
+    TransferEndNty transfer_end_nty = 23;
+    TransferLossPackReq transfer_losspack_req = 24;
+    TransferCompleteRsp transfer_complete_rsp = 25;
+
+    ParseCompleteReq parse_complete_req = 30;
+    ParseCompleteAck parse_complete_ack = 31;
+  }
+}
+
+enum Result {
+  RESULT_UNSPECIFIED = 0;
+  RESULT_SUCCESS = 1;
+  RESULT_FAILED = 2;
+}
+
+enum DeviceType {
+  DEVICE_TYPE_UNSPECIFIED = 0;
+  DEVICE_TYPE_SERVER = 1;
+  DEVICE_TYPE_HF = 2;
+  DEVICE_TYPE_MULTI_BAND_RADIO = 3;
+  DEVICE_TYPE_MULTI_BAND_HANDHELD = 4;
+  DEVICE_TYPE_CCU = 5;
+  DEVICE_TYPE_IEC = 6;
+  DEVICE_TYPE_SMALL_HANDHELD = 7;
+  DEVICE_TYPE_CCU_AUDIO = 8;
+  DEVICE_TYPE_VEH_INTER = 9;
+}
+
+enum ErrorCode {
+  ERROR_CODE_UNSPECIFIED = 0;
+  ERROR_CODE_INVALID_MESSAGE = 1;
+  ERROR_CODE_INVALID_PACKAGE = 2;
+  ERROR_CODE_PACKAGE_TOO_LARGE = 3;
+  ERROR_CODE_INVALID_ZIP_SIZE = 4;
+  ERROR_CODE_INSUFFICIENT_STORAGE = 5;
+  ERROR_CODE_AUTH_ASSIGNMENT_CONFLICT = 6;
+  ERROR_CODE_AUTH_CONFLICT = 7;
+  ERROR_CODE_AUTH_BINDING_MISSING = 8;
+  ERROR_CODE_BUSY = 9;
+  ERROR_CODE_FILE_SIZE_MISMATCH = 10;
+  ERROR_CODE_FILE_HASH_MISMATCH = 11;
+  ERROR_CODE_STORAGE_IO_ERROR = 12;
+  ERROR_CODE_PARSE_OUTPUT_FAILED = 13;
+  ERROR_CODE_PARSE_TIMEOUT = 14;
+  ERROR_CODE_OUTPUT_WRITE_FAILED = 15;
+  ERROR_CODE_SKIPPED_AFTER_PREVIOUS_FAILURE = 16;
+  ERROR_CODE_SESSION_TIMEOUT = 17;
+  ERROR_CODE_DISCOVERY_MISMATCH = 18;
+  ERROR_CODE_ESN_CONFLICT = 19;
+  ERROR_CODE_AUTH_TIMEOUT = 20;
+  ERROR_CODE_TRANSFER_SILENCE_TIMEOUT = 21;
+  ERROR_CODE_TRANSFER_NO_PROGRESS = 22;
+  ERROR_CODE_NETWORK_INTERFACE_ERROR = 23;
+}
+
+enum TransferStage {
+  TRANSFER_STAGE_UNSPECIFIED = 0;
+  TRANSFER_STAGE_PRECHECK = 1;
+  TRANSFER_STAGE_CACHE_REUSE = 2;
+  TRANSFER_STAGE_RECEIVE = 3;
+  TRANSFER_STAGE_VERIFY = 4;
+}
+
+enum ParseStage {
+  PARSE_STAGE_UNSPECIFIED = 0;
+  PARSE_STAGE_VALIDATE = 1;
+  PARSE_STAGE_EXTRACT = 2;
+  PARSE_STAGE_GENERATE = 3;
+  PARSE_STAGE_WRITE_OUTPUT = 4;
+  PARSE_STAGE_SNAPSHOT = 5;
+  PARSE_STAGE_SKIPPED = 6;
+  PARSE_STAGE_TIMEOUT = 7;
+}
+
+message ClientIdentity {
+  // Shared CPDC ESN: exactly 39 ASCII decimal digits.
+  string esn = 1;
+  repeated DeviceType device_types = 2;
+}
+
+message DeviceAssignment {
+  DeviceType device_type = 1;
+  string esn = 2;
+  string node_id = 3;
+  string device_id = 4;
+}
+
+message DeviceBinding {
+  DeviceType device_type = 1;
+  string device_id = 2;
+}
+
+message AuthConflictDetail {
+  DeviceType device_type = 1;
+  string existing_node_id = 2;
+  string existing_device_id = 3;
+  string received_node_id = 4;
+  string received_device_id = 5;
+}
+
+message MissingRange {
+  // Inclusive, zero-based chunk indexes. start must be <= end.
+  uint32 start = 1;
+  uint32 end = 2;
+}
+
+message ParseTypeResult {
+  DeviceType device_type = 1;
+  string device_id = 2;
+  Result result = 3;
+  // PARSE_STAGE_UNSPECIFIED for success, the concrete failing stage for a
+  // directly failed type, or PARSE_STAGE_SKIPPED when processing did not start
+  // because a previous type failed.
+  ParseStage stage = 4;
+  // UNSPECIFIED for success, SKIPPED_AFTER_PREVIOUS_FAILURE for a skipped type,
+  // and a concrete non-zero cause for every directly failed type.
+  ErrorCode error_code = 5;
+}
+
+// CPDS -> CPDC. No body fields are required.
+message DiscoverNty {}
+
+// CPDC -> CPDS. The Packet.message_id copies the triggering DiscoverNty ID.
+message DiscoverRsp {
+  // Shared CPDC ESN: exactly 39 ASCII decimal digits.
+  string esn = 1;
+  // Random value generated at process start: exactly 16 bytes.
+  bytes instance_nonce = 2;
+  repeated DeviceType device_types = 3;
+  string current_ip = 4;
+  string subnet_mask = 5;
+}
+
+// CPDS -> CPDC. When all assignments do not fit in one datagram, CPDS sends
+// multiple independent AuthNty packets. A DeviceAssignment is never split.
+message AuthNty {
+  repeated DeviceAssignment assignments = 1;
+}
+
+// CPDC -> CPDS. The Packet.message_id copies the AuthNty that completed the
+// CPDC binding or caused the failure.
+message AuthRsp {
+  ClientIdentity client = 1;
+  Result result = 2;
+
+  // Required only when result is RESULT_SUCCESS.
+  string node_id = 3;
+  repeated DeviceBinding bindings = 4;
+
+  // Required only when result is RESULT_FAILED.
+  ErrorCode error_code = 5;
+
+  // Present only when error_code is ERROR_CODE_AUTH_CONFLICT.
+  AuthConflictDetail conflict = 6;
+}
+
+// CPDS -> CPDC. file_sha256 is exactly 32 raw bytes. file_size must be in
+// [1, 1048576]. chunk_size is 1200 and total_chunks is ceil(file_size / 1200).
+message TransferStartNty {
+  string file_name = 1;
+  uint64 file_size = 2;
+  bytes file_sha256 = 3;
+  uint64 expanded_size = 4;
+  uint64 required_workspace = 5;
+  uint32 chunk_size = 6;
+  uint32 total_chunks = 7;
+}
+
+// CPDS -> CPDC. The complete protobuf Packet, including payload, must be no
+// larger than 1396 bytes; the 4-byte Magic prefix makes the complete UDP
+// payload no larger than 1400 bytes. payload is at most 1200 bytes.
+message TransferChunkNty {
+  uint32 chunk_index = 1;
+  bytes payload = 2;
+  fixed32 payload_crc32 = 3;
+}
+
+// CPDC -> CPDS. The Packet.message_id copies the TransferChunkNty whose valid
+// receipt first crossed the reported progress threshold.
+message TransferProgressRsp {
+  ClientIdentity client = 1;
+  uint32 received_chunks = 2;
+  uint32 total_chunks = 3;
+  uint32 percent = 4;
+}
+
+// CPDS -> CPDC. Session and message identity are carried by Packet. File hash,
+// size and chunk count are taken from the accepted TransferStartNty.
+message TransferEndNty {}
+
+// CPDC -> CPDS. This REQ does not have a dedicated ACK. CPDS merges each valid
+// request immediately and retransmits the requested chunks. A lost request is
+// recovered when a later TransferEndNty triggers a fresh missing-range check.
+message TransferLossPackReq {
+  ClientIdentity client = 1;
+  repeated MissingRange missing_ranges = 2;
+}
+
+// CPDC -> CPDS. This is the only terminal message for the transfer stage.
+//
+// RESULT_SUCCESS:
+//   - TRANSFER_STAGE_CACHE_REUSE when ./txbz already contains the exact file.
+//   - TRANSFER_STAGE_VERIFY after a newly received file passes size and hash.
+//
+// RESULT_FAILED:
+//   - TRANSFER_STAGE_PRECHECK for invalid metadata, missing authentication,
+//     oversized packages or insufficient storage.
+//   - TRANSFER_STAGE_RECEIVE for local file I/O failure.
+//   - TRANSFER_STAGE_VERIFY for final size or SHA-256 mismatch.
+//
+// The Packet.message_id copies the triggering TransferStartNty ID for a
+// precheck/cache result, the triggering TransferChunkNty ID for an immediately
+// reported receive I/O failure, or the triggering TransferEndNty ID for a final
+// receive/verify result.
+message TransferCompleteRsp {
+  ClientIdentity client = 1;
+  Result result = 2;
+  TransferStage stage = 3;
+  uint32 received_chunks = 4;
+  ErrorCode error_code = 5;
+}
+
+// CPDC -> CPDS. This single REQ reports both successful and failed parsing.
+// type_results contains exactly one item for every client.device_types item,
+// in the same order. A success item uses ERROR_CODE_UNSPECIFIED. A failed item
+// requires a concrete non-zero error_code. If a global error occurs before
+// type-specific processing, every type item is failed with the same error_code
+// and the appropriate ParseStage.
+//
+// On success, CPDC has already written all outputs and atomically updated
+// cpdc_config.json before sending. On failure, the prior success snapshot is
+// retained and at least one type_result or the top-level error_code explains
+// why. Human-readable text is localized by CPDS and is never carried here.
+message ParseCompleteReq {
+  ClientIdentity client = 1;
+  Result result = 2;
+  string node_id = 3;
+  repeated DeviceBinding bindings = 4;
+  repeated ParseTypeResult type_results = 5;
+  ErrorCode error_code = 6;
+}
+
+// CPDS -> CPDC. Packet.message_id copies the ParseCompleteReq ID. ACK confirms
+// only that CPDS received the final result; it does not control local commit or
+// successful snapshot persistence.
+message ParseCompleteAck {
+  string esn = 1;
+  repeated DeviceType device_types = 2;
+  Result result = 3;
+}

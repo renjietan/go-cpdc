@@ -1,0 +1,38 @@
+/.tools/
+/dist/
+/compiler/.go1.23.12/
+/compiler/*.zip
+/build/compiler/.go1.23.12/
+/build/compiler/*.zip
+/build/dist/bin/
+/build/dist/config/*/CPDC-*
+/build/dist/config/*/cpdc_config.json
+/build/dist/config/*/cpdc_config.*.json
+/build/update/
+/.codegraph/
+/.idea/
+/.vscode/
+
+# Local build and test output
+/cpdc
+/cpdc.exe
+*.test
+*.out
+*.prof
+*.log
+*.tmp
+coverage.*
+
+# Runtime state and generated device output
+/cpdc_config.json
+/txbz/
+/txbz_ccu/
+/txbz_server/
+/plan_local.tar
+/mission.tar.gz
+/ReReadJson.ini
+.cpdc-*
+
+# Operating-system metadata
+.DS_Store
+Thumbs.db

@@ -25,10 +25,15 @@ $previousGOARCH = $env:GOARCH
 $previousGOARM = $env:GOARM
 $previousCGO = $env:CGO_ENABLED
 $previousGOTOOLCHAIN = $env:GOTOOLCHAIN
+$previousGOROOT = $env:GOROOT
+$previousGOCACHE = $env:GOCACHE
 
 Push-Location $projectRoot
 try {
     $env:GOTOOLCHAIN = "local"
+    $env:GOROOT = Join-Path $compilerRoot "go"
+    if (-not $env:GOCACHE) { $env:GOCACHE = Join-Path $projectRoot "build\.gocache" }
+    New-Item -ItemType Directory -Force -Path $env:GOCACHE | Out-Null
     $version = (& $goExe version) -join "`n"
     if ($LASTEXITCODE -ne 0) {
         throw "Unable to run the CCU-Audio Go toolchain: $goExe"
@@ -73,4 +78,6 @@ try {
     $env:GOARM = $previousGOARM
     $env:CGO_ENABLED = $previousCGO
     $env:GOTOOLCHAIN = $previousGOTOOLCHAIN
+    $env:GOROOT = $previousGOROOT
+    $env:GOCACHE = $previousGOCACHE
 }

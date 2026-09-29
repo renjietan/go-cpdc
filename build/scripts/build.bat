@@ -9,6 +9,14 @@ powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%~dp0build-audi
 set "BUILD_EXIT_CODE=%ERRORLEVEL%"
 if not "%BUILD_EXIT_CODE%"=="0" goto build_failed
 
+powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%~dp0sync-setup.ps1"
+set "BUILD_EXIT_CODE=%ERRORLEVEL%"
+if not "%BUILD_EXIT_CODE%"=="0" goto build_failed
+
+powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%~dp0zip-setup.ps1"
+set "BUILD_EXIT_CODE=%ERRORLEVEL%"
+if not "%BUILD_EXIT_CODE%"=="0" goto build_failed
+
 echo.
 echo Build completed successfully.
 pause

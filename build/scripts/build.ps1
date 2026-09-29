@@ -6,6 +6,8 @@ $ErrorActionPreference = "Stop"
 $projectRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $outputRoot = Join-Path $projectRoot $OutputDirectory
 New-Item -ItemType Directory -Force -Path $outputRoot | Out-Null
+if (-not $env:GOCACHE) { $env:GOCACHE = Join-Path $projectRoot "build\.gocache" }
+New-Item -ItemType Directory -Force -Path $env:GOCACHE | Out-Null
 
 function Build-CPDC {
     param(

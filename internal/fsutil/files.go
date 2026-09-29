@@ -2,11 +2,20 @@ package fsutil
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"math"
 	"os"
 	"path/filepath"
 	"strings"
+)
+
+// Copy-phase sentinel errors so callers can distinguish which stage of an
+// atomic copy failed.
+var (
+	ErrOpenSource = errors.New("open source")
+	ErrTempWrite  = errors.New("temp write")
+	ErrRename     = errors.New("rename")
 )
 
 var temporaryPrefixes = []string{
@@ -54,35 +63,38 @@ func AtomicWriteFile(path string, data []byte, perm os.FileMode) (err error) {
 func AtomicCopy(src, dst string, perm os.FileMode) (err error) {
 	in, err := os.Open(src)
 	if err != nil {
-		return err
+		return fmt.Errorf("%w: %v", ErrOpenSource, err)
 	}
 	defer in.Close()
 	dir := filepath.Dir(dst)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return err
+		return fmt.Errorf("%w: %v", ErrTempWrite, err)
 	}
 	out, err := os.CreateTemp(dir, ".cpdc-copy-*")
 	if err != nil {
-		return err
+		return fmt.Errorf("%w: %v", ErrTempWrite, err)
 	}
 	tmpName := out.Name()
 	defer func() { _ = os.Remove(tmpName) }()
 	if err := out.Chmod(perm); err != nil {
 		_ = out.Close()
-		return err
+		return fmt.Errorf("%w: %v", ErrTempWrite, err)
 	}
 	if _, err := io.Copy(out, in); err != nil {
 		_ = out.Close()
-		return err
+		return fmt.Errorf("%w: %v", ErrTempWrite, err)
 	}
 	if err := out.Sync(); err != nil {
 		_ = out.Close()
-		return err
+		return fmt.Errorf("%w: %v", ErrTempWrite, err)
 	}
 	if err := out.Close(); err != nil {
-		return err
+		return fmt.Errorf("%w: %v", ErrTempWrite, err)
 	}
-	return replaceFile(tmpName, dst)
+	if err := replaceFile(tmpName, dst); err != nil {
+		return fmt.Errorf("%w: %v", ErrRename, err)
+	}
+	return nil
 }
 
 // ClearDirectRegularFiles removes regular files directly below dir only.

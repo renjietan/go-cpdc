@@ -4,6 +4,7 @@
 /compiler/*.zip
 /build/compiler/.go1.23.12/
 /build/compiler/*.zip
+/build/.gocache/
 /build/dist/bin/
 /build/dist/config/*/CPDC-*
 /build/dist/config/*/cpdc_config.json

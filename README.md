@@ -44,3 +44,4 @@ go vet ./...
     - --config-path /data/user  (如果文件名是cpdc_config.json)
     - --config-path /data/user/cpdc-config-vehInte.json  (文件名称如果不是cpdc-config.json)
 2、cpdc_config.json  文件中 有个ReReadjsonPath 字段，这个字段用来读取 ini 文件
+3、设置保留临时文件：$env:CPDC_KEEP_TEMP = "1"

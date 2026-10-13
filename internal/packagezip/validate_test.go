@@ -213,7 +213,7 @@ func TestValidateRecognizesVehInterDevice(t *testing.T) {
       "File":{"Guid":1001},
       "SystemConfiguration":{
         "LANMember":{"CCU":["dc_ccu_1"],"VehInter":["dc_VehInter_1"]},
-        "LANPrimary":{"Server":[]},
+        "LANPrimary":{"TEDS":[]},
         "Radio":{}
       }
     }`)
@@ -230,6 +230,27 @@ func TestValidateRecognizesVehInterDevice(t *testing.T) {
 	}
 }
 
+func TestValidateAcceptsTedsAndSkipsCommandRelation(t *testing.T) {
+	entries := map[string][]byte{
+		"0_contacts/contacts_1.json":         []byte(`{"File":{"Guid":"c"},"UnitTree":{"SubUnits":["unit_1"],"NetNodes":["nn_1"]}}`),
+		"0_contacts/command_relation_1.json": []byte(`{"File":{"Layer":"command_relation","Guid":"cr"},"CommandTree":[]}`),
+		"3_device_config/dc_teds_1.json":     []byte(`{"File":{"Guid":"t"},"Model":"TEDS"}`),
+		"4_net_node/nn_1.json":               []byte(`{"File":{"Guid":"n"},"SystemConfiguration":{"LANMember":{},"LANPrimary":{"TEDS":["dc_teds_1"]},"Radio":{}}}`),
+		"6_unit/unit_1.json":                 []byte(`{"File":{"Guid":"u"},"UnitName":"Unit"}`),
+	}
+	pkg, err := Validate(context.Background(), writeZIP(t, entries))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pkg.Close()
+	device, ok := pkg.Devices["dc_teds_1"]
+	if !ok || device.Type != cpdv1.DeviceType_DEVICE_TYPE_SERVER {
+		t.Fatalf("device = %+v, %v", device, ok)
+	}
+	if pkg.Nodes["nn_1"] == nil || len(pkg.Nodes["nn_1"].Devices) != 1 {
+		t.Fatalf("node = %+v", pkg.Nodes["nn_1"])
+	}
+}
 func validEntries() map[string][]byte {
 	return map[string][]byte{
 		"0_contacts/contacts_1.json": []byte(`{
@@ -243,7 +264,7 @@ func validEntries() map[string][]byte {
           "File":{"Guid":1001},
           "SystemConfiguration":{
             "LANMember":{"CCU":["dc_ccu_1"]},
-            "LANPrimary":{"Server":[]},
+            "LANPrimary":{"TEDS":[]},
             "Radio":{}
           }
         }`),

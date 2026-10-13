@@ -137,6 +137,12 @@ func (c *Client) State() State { return c.state }
 
 func (c *Client) SessionID() []byte { return protocol.CloneID(c.sessionID) }
 
+// SetDisplayAddress updates the IP and subnet mask reported in DISCOVER_RSP.
+func (c *Client) SetDisplayAddress(ip, subnetMask string) {
+	c.ip = ip
+	c.subnetMask = subnetMask
+}
+
 func (c *Client) Handle(packet *cpdv1.Packet, now time.Time) []*cpdv1.Packet {
 	if packet == nil || !protocol.ValidID(packet.GetSessionId()) || !protocol.ValidID(packet.GetMessageId()) || packet.GetBody() == nil {
 		return nil

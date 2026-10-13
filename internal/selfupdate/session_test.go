@@ -160,8 +160,8 @@ func TestSessionRepliesToServerPort(t *testing.T) {
 	if len(writes) != 1 {
 		t.Fatalf("writes = %v", writes)
 	}
-	if writes[0].addr.Port != serverPort || !writes[0].addr.IP.Equal(net.IPv4(192, 168, 1, 20)) {
-		t.Fatalf("reply destination = %v, want 192.168.1.20:%d", writes[0].addr, serverPort)
+	if writes[0].addr.Port != serverPort || !writes[0].addr.IP.Equal(net.IPv4bcast) {
+		t.Fatalf("reply destination = %v, want 255.255.255.255:%d", writes[0].addr, serverPort)
 	}
 }
 
@@ -229,13 +229,19 @@ func TestSessionFullTransferValidatesAndInstalls(t *testing.T) {
 	oldSpawn := spawnProcess
 	oldExit := exitNow
 	oldInterval := writeOkSendInterval
+	oldWait := waitForFinalizeStarted
+	oldWrite := writeOldExited
 	spawnProcess = func(string, []string) error { return nil }
 	exitNow = func(int) {}
 	writeOkSendInterval = 0
+	waitForFinalizeStarted = func(string, time.Duration) error { return nil }
+	writeOldExited = func(string) {}
 	defer func() {
 		spawnProcess = oldSpawn
 		exitNow = oldExit
 		writeOkSendInterval = oldInterval
+		waitForFinalizeStarted = oldWait
+		writeOldExited = oldWrite
 	}()
 
 	var installed []byte

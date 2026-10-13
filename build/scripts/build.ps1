@@ -45,6 +45,7 @@ Push-Location $projectRoot
 try {
     Build-CPDC -Name "CPDC.exe" -GOOS "windows" -GOARCH "amd64"
     Build-CPDC -Name "CPDC-CCU" -GOARCH "amd64" -Target "ccu"
+    Build-CPDC -Name "CPDC-IEC" -GOARCH "arm64" -GOARM64 "v8.0" -Target "iec"
     Build-CPDC -Name "CPDC-MultibandRadio" -GOARCH "arm64" -GOARM64 "v8.0"
     Build-CPDC -Name "CPDC-MultibandHandheld" -GOARCH "arm" -GOARM "7"
     Build-CPDC -Name "CPDC-VehInte" -GOARCH "arm64"

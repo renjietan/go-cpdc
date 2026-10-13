@@ -16,6 +16,7 @@ func Run(ctx context.Context, transport *netio.Transport, client *Client, logger
 	if logger == nil {
 		logger = slog.Default()
 	}
+	var lastRefreshedSession []byte
 	for {
 		if err := ctx.Err(); err != nil {
 			return nil
@@ -34,15 +35,23 @@ func Run(ctx context.Context, transport *netio.Transport, client *Client, logger
 			packet, decodeErr := protocol.Unmarshal(datagram)
 			if decodeErr == nil {
 				logger.Debug("received CPD packet", "type", packetType(packet), "source", source.IP.String())
+				if packet.GetDiscoverNty() != nil && !protocol.SameID(packet.GetSessionId(), lastRefreshedSession) {
+					lastRefreshedSession = protocol.CloneID(packet.GetSessionId())
+					if candidates, refreshErr := transport.Refresh(); refreshErr != nil {
+						logger.Warn("refresh broadcast interfaces failed", "error", refreshErr)
+					} else if len(candidates) > 0 {
+						client.SetDisplayAddress(candidates[0].IPString(), candidates[0].SubnetMaskString())
+					}
+				}
 				if err := sendPackets(transport, client.Handle(packet, now)); err != nil {
-					return err
+					logger.Warn("send reply failed", "error", err)
 				}
 			} else if !errors.Is(decodeErr, protocol.ErrForeignPacket) {
 				logger.Warn("discarded invalid CPD packet", "source", source.IP.String(), "error_type", "invalid_protocol_message")
 			}
 		}
 		if err := sendPackets(transport, client.Tick(time.Now())); err != nil {
-			return err
+			logger.Warn("send tick failed", "error", err)
 		}
 	}
 }

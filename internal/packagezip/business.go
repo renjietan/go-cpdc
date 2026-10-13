@@ -49,6 +49,9 @@ func (p *Package) validateBusiness(ctx context.Context) error {
 			continue
 		}
 		root := strings.SplitN(name, "/", 2)[0]
+		if root == "0_contacts" && !strings.HasPrefix(path.Base(name), "contacts_") {
+			continue
+		}
 		indexedDirectory := root == "0_contacts" || root == "3_device_config" || root == "4_net_node" || root == "6_unit"
 		if !strings.EqualFold(path.Ext(name), ".json") {
 			if indexedDirectory {
@@ -144,7 +147,7 @@ func inferDeviceType(deviceID string) (cpdv1.DeviceType, bool) {
 		prefix     string
 		deviceType cpdv1.DeviceType
 	}{
-		{"dc_server_", cpdv1.DeviceType_DEVICE_TYPE_SERVER},
+		{"dc_teds_", cpdv1.DeviceType_DEVICE_TYPE_SERVER},
 		{"dc_IEC_", cpdv1.DeviceType_DEVICE_TYPE_IEC},
 		{"dc_ccu_", cpdv1.DeviceType_DEVICE_TYPE_CCU},
 		{"dc_VehInter_", cpdv1.DeviceType_DEVICE_TYPE_VEH_INTER},
@@ -168,7 +171,7 @@ func (p *Package) parseNode(nodeID string, document map[string]any, deviceDocs m
 	}
 	node := &Node{ID: nodeID}
 	seen := make(map[string]cpdv1.DeviceType)
-	serverSeen, iecSeen := false, false
+	tedsSeen, iecSeen := false, false
 	add := func(deviceType cpdv1.DeviceType, expectedPrefix string, ids []string) error {
 		for _, deviceID := range ids {
 			if len([]byte(deviceID)) > MaxComponentBytes || !utf8.ValidString(deviceID) || !strings.HasPrefix(deviceID, expectedPrefix) || strings.ContainsAny(deviceID, "/\\:\x00") {
@@ -198,15 +201,15 @@ func (p *Package) parseNode(nodeID string, document map[string]any, deviceDocs m
 	if err != nil {
 		return nil, invalid("4_net_node/"+nodeID+".json", cpdv1.ErrorCode_ERROR_CODE_INVALID_PACKAGE, err)
 	}
-	serverIDs, err := optionalStringList(lanPrimary, "Server")
+	tedsIDs, err := optionalStringList(lanPrimary, "TEDS")
 	if err != nil {
 		return nil, invalid("4_net_node/"+nodeID+".json", cpdv1.ErrorCode_ERROR_CODE_INVALID_PACKAGE, err)
 	}
-	for _, id := range serverIDs {
+	for _, id := range tedsIDs {
 		switch {
-		case strings.HasPrefix(id, "dc_server_"):
-			serverSeen = true
-			if err := add(cpdv1.DeviceType_DEVICE_TYPE_SERVER, "dc_server_", []string{id}); err != nil {
+		case strings.HasPrefix(id, "dc_teds_"):
+			tedsSeen = true
+			if err := add(cpdv1.DeviceType_DEVICE_TYPE_SERVER, "dc_teds_", []string{id}); err != nil {
 				return nil, err
 			}
 		case strings.HasPrefix(id, "dc_IEC_"):
@@ -215,11 +218,11 @@ func (p *Package) parseNode(nodeID string, document map[string]any, deviceDocs m
 				return nil, err
 			}
 		default:
-			return nil, invalid("4_net_node/"+nodeID+".json", cpdv1.ErrorCode_ERROR_CODE_INVALID_PACKAGE, fmt.Errorf("unknown LANPrimary.Server device %s", id))
+			return nil, invalid("4_net_node/"+nodeID+".json", cpdv1.ErrorCode_ERROR_CODE_INVALID_PACKAGE, fmt.Errorf("unknown LANPrimary.TEDS device %s", id))
 		}
 	}
-	if serverSeen && iecSeen {
-		return nil, invalid("4_net_node/"+nodeID+".json", cpdv1.ErrorCode_ERROR_CODE_INVALID_PACKAGE, errors.New("Server and IEC are mutually exclusive"))
+	if tedsSeen && iecSeen {
+		return nil, invalid("4_net_node/"+nodeID+".json", cpdv1.ErrorCode_ERROR_CODE_INVALID_PACKAGE, errors.New("TEDS and IEC are mutually exclusive"))
 	}
 	lanMember, err := optionalObject(system, "LANMember")
 	if err != nil {

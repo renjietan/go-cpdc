@@ -1,0 +1,15 @@
+[Unit]
+Description=CPDC IEC Service
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/CPDC/bin
+ExecStart=/CPDC/bin/CPDC-IEC
+Restart=always
+RestartSec=3
+StandardOutput=append:/CPDC/bin/cpdc.log
+StandardError=append:/CPDC/bin/cpdc.log
+
+[Install]
+WantedBy=multi-user.target

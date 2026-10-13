@@ -188,7 +188,7 @@ func TestProcessServerWritesRootLocalNodeAndOriginalName(t *testing.T) {
 	_, code := Process(context.Background(), Request{
 		Root: root, Package: pkg, PackageName: "txbz_original.zip", NodeID: "nn_1",
 		DeviceTypes: []cpdv1.DeviceType{cpdv1.DeviceType_DEVICE_TYPE_SERVER},
-		Bindings:    map[cpdv1.DeviceType]string{cpdv1.DeviceType_DEVICE_TYPE_SERVER: "dc_server_1"},
+		Bindings:    map[cpdv1.DeviceType]string{cpdv1.DeviceType_DEVICE_TYPE_SERVER: "dc_teds_1"},
 	})
 	if code != cpdv1.ErrorCode_ERROR_CODE_UNSPECIFIED {
 		t.Fatalf("code = %v", code)
@@ -259,7 +259,7 @@ func TestProcessMarksRemainingTypesSkipped(t *testing.T) {
 		DeviceTypes: []cpdv1.DeviceType{cpdv1.DeviceType_DEVICE_TYPE_CCU, cpdv1.DeviceType_DEVICE_TYPE_SERVER},
 		Bindings: map[cpdv1.DeviceType]string{
 			cpdv1.DeviceType_DEVICE_TYPE_CCU:    "missing",
-			cpdv1.DeviceType_DEVICE_TYPE_SERVER: "dc_server_1",
+			cpdv1.DeviceType_DEVICE_TYPE_SERVER: "dc_teds_1",
 		},
 	})
 	if code != cpdv1.ErrorCode_ERROR_CODE_INVALID_PACKAGE || len(results) != 2 {
@@ -414,8 +414,8 @@ func baseEntries(includeServer bool) map[string][]byte {
 		"1_resource/optional_resource.bin": []byte("resource"),
 	}
 	if includeServer {
-		server = `"Server":["dc_server_1"]`
-		entries["3_device_config/dc_server_1.json"] = []byte(`{"File":{"Guid":"server"},"Model":"Server"}`)
+		server = `"TEDS":["dc_teds_1"]`
+		entries["3_device_config/dc_teds_1.json"] = []byte(`{"File":{"Guid":"server"},"Model":"TEDS"}`)
 	}
 	entries["4_net_node/nn_1.json"] = []byte(`{"File":{"Guid":"n"},"SystemConfiguration":{"LANMember":{"CCU":["dc_ccu_1"]},"LANPrimary":{` + server + `},"Radio":{}}}`)
 	return entries
@@ -424,7 +424,7 @@ func baseEntries(includeServer bool) map[string][]byte {
 func primaryEntries(deviceID string) map[string][]byte {
 	entries := baseEntries(false)
 	entries["3_device_config/"+deviceID+".json"] = []byte(`{"File":{"Guid":"primary"},"Model":"Primary"}`)
-	entries["4_net_node/nn_1.json"] = []byte(`{"File":{"Guid":"n"},"SystemConfiguration":{"LANMember":{"CCU":["dc_ccu_1"]},"LANPrimary":{"Server":["` + deviceID + `"]},"Radio":{}}}`)
+	entries["4_net_node/nn_1.json"] = []byte(`{"File":{"Guid":"n"},"SystemConfiguration":{"LANMember":{"CCU":["dc_ccu_1"]},"LANPrimary":{"TEDS":["` + deviceID + `"]},"Radio":{}}}`)
 	return entries
 }
 

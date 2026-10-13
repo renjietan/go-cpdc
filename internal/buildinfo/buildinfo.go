@@ -1,6 +1,6 @@
 package buildinfo
 
-// Target is set by -ldflags. Supported values are generic and ccu.
+// Target is set by -ldflags. Supported values are generic, ccu and iec.
 var Target = "generic"
 
 func WorkspaceFactor() uint64 {

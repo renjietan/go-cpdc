@@ -34,11 +34,12 @@ Get-ChildItem -LiteralPath $setupDir -Directory | ForEach-Object {
 # 2) Copy fresh binaries from bin into the matching setup folder.
 $mapping = @(
     @{ Dir = 'CCU';      Src = 'CPDC-CCU';               Dst = 'CPDC-CCU' },
+    @{ Dir = 'IEC';      Src = 'CPDC-IEC';               Dst = 'CPDC-IEC' },
     @{ Dir = 'CCUAudio'; Src = 'CPDC-CCU-Audio';         Dst = 'CPDC-CCU-Audio' },
     @{ Dir = 'MMR200';   Src = 'CPDC-MultibandRadio';    Dst = 'CPDC-MultibandRadio' },
     @{ Dir = 'MR9360';   Src = 'CPDC-HF';                Dst = 'CPDC-HF' },
     @{ Dir = 'PMR200';   Src = 'CPDC-MultibandHandheld'; Dst = 'CPDC-MultibandHandheld' },
-    @{ Dir = 'VehInter'; Src = 'CPDC-VehInte';           Dst = 'CPDC_VehInte' },
+    @{ Dir = 'VehInter'; Src = 'CPDC-VehInte';           Dst = 'CPDC-VehInte' },
     @{ Dir = 'Windows';  Src = 'CPDC.exe';               Dst = 'CPDC.exe' }
 )
 

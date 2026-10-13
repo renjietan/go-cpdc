@@ -10,6 +10,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"path/filepath"
 	"sync"
 	"time"
 )
@@ -40,6 +41,7 @@ type datagramConn interface {
 // without real sockets.
 type Session struct {
 	conn      datagramConn
+	writers   []datagramConn
 	info      DeviceInfo
 	assembler *Assembler
 	// targetVersion is the version carried by the most recent "version:"
@@ -68,13 +70,68 @@ func NewSession(info DeviceInfo) (*Session, error) {
 	}
 	logConnOpen(conn.LocalAddr(), info)
 	s := newSession(info, conn)
+	if ws := broadcastWriters(); len(ws) > 0 {
+		s.writers = ws
+	}
 	s.write = writeFiles
 	return s, nil
 }
 
 func newSession(info DeviceInfo, conn datagramConn) *Session {
-	return &Session{conn: conn, info: info, assembler: NewAssembler()}
+	return &Session{conn: conn, writers: []datagramConn{conn}, info: info, assembler: NewAssembler()}
 }
+
+// broadcastWriters enumerates usable IPv4 interfaces and returns one UDP writer
+// per interface, each bound to that interface's IPv4 and broadcast enabled. It
+// deliberately does not require net.FlagBroadcast because Android may not expose
+// that flag even though SO_BROADCAST can still be enabled manually. An empty
+// result means the caller should fall back to conn.
+func broadcastWriters() []datagramConn {
+	addrs, err := net.InterfaceAddrs()
+	fmt.Fprintln(os.Stdout, "[BROADCAST] InterfaceAddrs err=", err, "addrs=", addrs)
+	if err != nil {
+		return nil
+	}
+	seen := make(map[string]bool)
+	var writers []datagramConn
+	for _, addr := range addrs {
+		var ip net.IP
+		switch a := addr.(type) {
+		case *net.IPNet:
+			ip = a.IP.To4()
+		case *net.IPAddr:
+			ip = a.IP.To4()
+		default:
+			fmt.Fprintln(os.Stdout, "[BROADCAST] skip addr type", fmt.Sprintf("%T", addr), addr)
+			continue
+		}
+		if ip == nil || ip.IsLoopback() {
+			fmt.Fprintln(os.Stdout, "[BROADCAST] skip ip", ip)
+			continue
+		}
+		key := ip.String()
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		conn, err := net.ListenUDP("udp4", &net.UDPAddr{IP: ip, Port: 0})
+		if err != nil {
+			fmt.Fprintln(os.Stdout, "[BROADCAST] bind", key, "failed:", err)
+			continue
+		}
+		if err := enableBroadcast(conn); err != nil {
+			fmt.Fprintln(os.Stdout, "[BROADCAST] enableBroadcast", key, "failed:", err)
+			_ = conn.Close()
+			continue
+		}
+		fmt.Fprintln(os.Stdout, "[BROADCAST] writer", key, "ready")
+		writers = append(writers, conn)
+	}
+	fmt.Fprintln(os.Stdout, "[BROADCAST] writers=", len(writers))
+	return writers
+}
+
+
 
 // Run reads downlink commands until ctx is cancelled and dispatches each one.
 func (s *Session) Run(ctx context.Context) error {
@@ -112,8 +169,9 @@ func (s *Session) Reset() {
 	s.cancelInstall()
 	s.assembler.Reset()
 	s.targetVersion = ""
-	if runDir, err := executableDir(); err == nil {
-		_ = removeReceiptMarker(runDir)
+	if dataDir, err := resolveDataDir(s.info); err == nil {
+		_ = removeReceiptMarker(dataDir)
+		_ = os.Remove(filepath.Join(dataDir, finalizeFailName))
 	}
 }
 
@@ -235,6 +293,10 @@ func (s *Session) handleValid(addr *net.UDPAddr, data []byte) {
 // writeOkSendCount is the number of times write_ok is sent before exiting.
 const writeOkSendCount = 3
 
+// finalizeStartWaitTimeout is how long the old process waits for the finalize
+// helper to write its started marker before failing the write phase.
+var finalizeStartWaitTimeout = 3 * time.Second
+
 // writeOkSendInterval is the delay between repeated write_ok sends. It is a
 // package variable so tests can shorten it to zero.
 var writeOkSendInterval = time.Second
@@ -252,12 +314,30 @@ func (s *Session) handleWrite(addr *net.UDPAddr, data []byte) {
 		return
 	}
 	s.cleanupForWrite()
+	dataDir, dataErr := resolveDataDir(s.info)
+	if dataErr != nil {
+		_ = s.send(addr, encodeWriteFail(s.info, "executable_path_fail"))
+		return
+	}
 	paramsPath, _, err := s.write(context.Background(), s.assembler.Bytes(), s.info, s.targetVersion)
 	if err != nil {
 		_ = s.send(addr, encodeWriteFail(s.info, writeFailReason(err)))
 		return
 	}
-	// 用自身 --self-update-finalize 作为替换器；失败则回 write_fail（此时旧进程还没退，能回复）。
+	// VehInter 由第三方接管替换与拉起，不启动 finalize。
+	if s.info.DeviceType == "VehInter" {
+		_ = os.MkdirAll(dataDir, 0o755)
+		_ = os.WriteFile(filepath.Join(dataDir, vehInterHandoffName), []byte("1"), 0o600)
+		for i := 0; i < writeOkSendCount; i++ {
+			if i > 0 {
+				time.Sleep(writeOkSendInterval)
+			}
+			_ = s.send(addr, encodeWriteOk(s.info))
+		}
+		exitNow(0)
+		return
+	}
+
 	exePath, exeErr := executablePath()
 	if exeErr != nil {
 		_ = s.send(addr, encodeWriteFail(s.info, "executable_path_fail"))
@@ -267,13 +347,17 @@ func (s *Session) handleWrite(addr *net.UDPAddr, data []byte) {
 		_ = s.send(addr, encodeWriteFail(s.info, "restart_spawn_fail"))
 		return
 	}
-	// write_ok 连发 3 次（间隔 1 秒），然后退出旧进程。
+	if err := waitForFinalizeStarted(dataDir, finalizeStartWaitTimeout); err != nil {
+		_ = s.send(addr, encodeWriteFail(s.info, "finalize_start_fail"))
+		return
+	}
 	for i := 0; i < writeOkSendCount; i++ {
 		if i > 0 {
 			time.Sleep(writeOkSendInterval)
 		}
 		_ = s.send(addr, encodeWriteOk(s.info))
 	}
+	writeOldExited(dataDir)
 	exitNow(0)
 }
 
@@ -289,24 +373,33 @@ func (s *Session) headerMatches(crc, packetCount, totalBytes uint32, fileName st
 func (s *Session) cleanupForWrite() {
 	if runDir, err := executableDir(); err == nil {
 		_ = CleanupInstallDir(runDir)
-		_ = removeReceiptMarker(runDir)
+		if dataDir, derr := resolveDataDir(s.info); derr == nil {
+			_ = removeReceiptMarker(dataDir)
+			_ = os.Remove(filepath.Join(dataDir, finalizeParamsName))
+			_ = os.Remove(filepath.Join(dataDir, finalizeFailName))
+			_ = os.Remove(filepath.Join(dataDir, finalizeStartedName))
+			_ = os.Remove(filepath.Join(dataDir, oldExitedName))
+			_ = os.Remove(filepath.Join(dataDir, vehInterHandoffName))
+		}
 	}
 }
 
-func (s *Session) send(addr *net.UDPAddr, data []byte) error {
-	logDump("TX", addr.IP.String(), data, s.assembler.packetCount)
+func (s *Session) send(_ *net.UDPAddr, data []byte) error {
+	destination := &net.UDPAddr{IP: net.IPv4bcast, Port: serverPort}
+	logDump("TX", destination.IP.String(), data, s.assembler.packetCount)
 
-	// Replies are sent to the CPDS receive port (39004) on the same interface
-	// the command arrived from. The source port is an ephemeral CPDS send
-	// socket, so replying to addr directly would not reach the CPDS listener.
-	destination := &net.UDPAddr{IP: addr.IP, Port: serverPort}
-	n, err := s.conn.WriteToUDP(data, destination)
-	if err != nil {
-		fmt.Fprintf(os.Stdout, "[TX-ERR] 发送 %d 字节到 %s 失败: %v\n", len(data), destination.String(), err)
-	} else if n != len(data) {
-		fmt.Fprintf(os.Stdout, "[TX-WARN] 发送 %d/%d 字节到 %s\n", n, len(data), destination.String())
+	var lastErr error
+	for _, writer := range s.writers {
+		n, err := writer.WriteToUDP(data, destination)
+		if err != nil {
+			fmt.Fprintf(os.Stdout, "[TX-ERR] 发送 %d 字节到 %s 失败: %v\n", len(data), destination.String(), err)
+			lastErr = err
+		} else if n != len(data) {
+			fmt.Fprintf(os.Stdout, "[TX-WARN] 发送 %d/%d 字节到 %s\n", n, len(data), destination.String())
+			lastErr = io.ErrShortWrite
+		}
 	}
-	return err
+	return lastErr
 }
 
 // validateZip reports whether data can be fully read back as a ZIP archive,

@@ -2,9 +2,11 @@ package selfupdate
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestLoadFinalizeParams(t *testing.T) {
@@ -61,13 +63,39 @@ func TestHasFinalizeFail(t *testing.T) {
 	if hasFinalizeFail(dir) {
 		t.Fatal("expected no finalize fail marker")
 	}
-	if err := os.MkdirAll(filepath.Join(dir, installDirName), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, installDirName, finalizeFailName), []byte("boom"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, finalizeFailName), []byte("boom"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if !hasFinalizeFail(dir) {
 		t.Fatal("expected finalize fail marker")
+	}
+}
+
+func TestWaitForFinalizeStartedMarker(t *testing.T) {
+	dir := t.TempDir()
+	if err := waitForFinalizeStarted(dir, 20*time.Millisecond); err == nil {
+		t.Fatal("expected timeout before marker exists")
+	}
+	if err := writeFinalizeStarted(dir); err != nil {
+		t.Fatal(err)
+	}
+	if err := waitForFinalizeStarted(dir, time.Second); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestWriteOldExitedCreatesMarker(t *testing.T) {
+	dir := t.TempDir()
+	writeOldExited(dir)
+	if _, err := os.Stat(filepath.Join(dir, oldExitedName)); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestLogOldExitedWriteError(t *testing.T) {
+	dir := t.TempDir()
+	logOldExitedWriteError(dir, errors.New("boom"))
+	if _, err := os.Stat(filepath.Join(dir, logDirName, oldExitedWriteErrorLogName)); err != nil {
+		t.Fatal(err)
 	}
 }

@@ -17,7 +17,8 @@ import (
 )
 
 const (
-	receiptMarkerName = ".cpdc_update_receipt.json"
+	receiptMarkerName   = ".cpdc_update_receipt.json"
+	vehInterHandoffName = "vehinter_handoff"
 	iniFileName       = "ReReadJson.ini"
 	installDirName    = "install_cpdc"
 	logDirName        = "logs"
@@ -126,6 +127,13 @@ func writeFiles(ctx context.Context, zipBytes []byte, info DeviceInfo, targetVer
 		return "", "", &writeError{code: "executable_path_fail"}
 	}
 	runDir = filepath.Dir(exePath)
+	dataDir, dataErr := resolveDataDir(info)
+	if dataErr != nil {
+		return "", "", &writeError{code: "executable_path_fail"}
+	}
+	if err := os.MkdirAll(dataDir, 0o755); err != nil {
+		return "", "", &writeError{code: "mkdir_fail", path: dataDir}
+	}
 
 	if err := ctx.Err(); err != nil {
 		return "", "", err
@@ -143,41 +151,48 @@ func writeFiles(ctx context.Context, zipBytes []byte, info DeviceInfo, targetVer
 	if err := ctx.Err(); err != nil {
 		return "", "", err
 	}
-	if err := writeReceiptMarker(targetVersion, info.IP, runDir); err != nil {
-		return "", "", &writeError{code: "write_marker_fail", path: filepath.Join(runDir, receiptMarkerName)}
+	if err := writeReceiptMarker(targetVersion, info.IP, dataDir); err != nil {
+		return "", "", &writeError{code: "write_marker_fail", path: filepath.Join(dataDir, receiptMarkerName)}
 	}
 	// The update is committed past this point: no more cancellation checks.
 	_, configFile, _ := resolveConfigPathsIn(info.ConfigPath, runDir)
+	oldVersion, _ := readVersionFile(configFile)
 	if err := writeVersionToConfig(info.ConfigPath, runDir, targetVersion); err != nil {
-		_ = removeReceiptMarker(runDir)
+		_ = removeReceiptMarker(dataDir)
 		return "", "", &writeError{code: "version_write_fail", path: configFile}
 	}
 	stagingDir := filepath.Join(runDir, installDirName)
 	if err := os.MkdirAll(stagingDir, 0o755); err != nil {
-		_ = removeReceiptMarker(runDir)
+		_ = removeReceiptMarker(dataDir)
 		return "", "", &writeError{code: "mkdir_fail", path: stagingDir}
 	}
 	newExePath := filepath.Join(stagingDir, "new_exe")
 	if err := fsutil.AtomicCopy(filepath.Join(typeDir, installFile), newExePath, 0o755); err != nil {
-		_ = removeReceiptMarker(runDir)
+		_ = removeReceiptMarker(dataDir)
 		return "", "", phaseWriteError("overwrite_binary", newExePath, err)
 	}
-	paramsPath, err = prepareFinalizeParams(info, targetVersion, runDir, newExePath)
-	if err != nil {
-		_ = removeReceiptMarker(runDir)
-		return "", "", err
+	if info.DeviceType == "VehInter" {
+		// VehInter 由第三方接管替换与拉起，不写 finalize 参数。
+		return "", runDir, nil
+	}
+	if info.DeviceType != "VehInter" {
+		paramsPath, err = prepareFinalizeParams(info, targetVersion, runDir, dataDir, newExePath, oldVersion)
+		if err != nil {
+			_ = removeReceiptMarker(dataDir)
+			return "", "", err
+		}
 	}
 	return paramsPath, runDir, nil
 }
 
 // prepareFinalizeParams writes the finalize parameter file for the replacement
 // process and returns its path.
-func prepareFinalizeParams(info DeviceInfo, targetVersion, runDir, newExePath string) (string, error) {
+func prepareFinalizeParams(info DeviceInfo, targetVersion, runDir, dataDir, newExePath, oldVersion string) (string, error) {
 	exePath, err := executablePath()
 	if err != nil {
 		return "", &writeError{code: "executable_path_fail"}
 	}
-	logDir := filepath.Join(runDir, logDirName)
+	logDir := filepath.Join(dataDir, logDirName)
 	if err := os.MkdirAll(logDir, 0o755); err != nil {
 		return "", &writeError{code: "mkdir_fail", path: logDir}
 	}
@@ -189,9 +204,12 @@ func prepareFinalizeParams(info DeviceInfo, targetVersion, runDir, newExePath st
 		RunCommand:      info.RunCommand,
 		LogPath:         filepath.Join(logDir, "cpdc_"+targetVersion+".log"),
 		FinalizeLogPath: filepath.Join(logDir, "cpdc_restart.log"),
-		FailMarker:      filepath.Join(runDir, installDirName, finalizeFailName),
+		FailMarker:      filepath.Join(dataDir, finalizeFailName),
+		DataDir:         dataDir,
+		OldVersion:      oldVersion,
+		ConfigPath:      info.ConfigPath,
 	}
-	paramsPath := filepath.Join(runDir, installDirName, finalizeParamsName)
+	paramsPath := filepath.Join(dataDir, finalizeParamsName)
 	data, err := json.MarshalIndent(params, "", "  ")
 	if err != nil {
 		return "", &writeError{code: "write_params_fail", path: paramsPath}

@@ -1,11 +1,11 @@
 {
   "deviceTypes": [
     "CCU",
-    "Server"
+    "TEDS"
  ],
   "esn": "",
   "supportedTypes": [
-    "Server",
+    "TEDS",
     "HF",
     "MultiBandRadio",
     "MultibandHandheld",

@@ -44,7 +44,7 @@ func TestReceiptError(t *testing.T) {
 func TestSendUpdateReceipt(t *testing.T) {
 	t.Run("ok", func(t *testing.T) {
 		conn := &fakeConn{reads: make(chan fakeRead, 1)}
-		if err := sendUpdateReceipt(conn, testAddr, testDevice, "1.2.3.4", nil); err != nil {
+		if err := sendUpdateReceipt(conn, testDevice, "1.2.3.4", nil); err != nil {
 			t.Fatal(err)
 		}
 		writes := conn.snapshotWrites()
@@ -58,7 +58,7 @@ func TestSendUpdateReceipt(t *testing.T) {
 
 	t.Run("fail", func(t *testing.T) {
 		conn := &fakeConn{reads: make(chan fakeRead, 1)}
-		if err := sendUpdateReceipt(conn, testAddr, testDevice, "", errVersionMismatch); err != nil {
+		if err := sendUpdateReceipt(conn, testDevice, "", errVersionMismatch); err != nil {
 			t.Fatal(err)
 		}
 		writes := conn.snapshotWrites()
@@ -93,7 +93,7 @@ func TestSendStartupReceipt(t *testing.T) {
 
 			conn := &fakeConn{reads: make(chan fakeRead, 1)}
 			s := newSession(testDevice, conn)
-			if !s.SendStartupReceipt(testAddr, runDir, "") {
+			if !s.SendStartupReceipt(runDir, "") {
 				t.Fatal("SendStartupReceipt reported no receipt")
 			}
 
@@ -113,11 +113,29 @@ func TestSendStartupReceipt(t *testing.T) {
 	t.Run("no marker", func(t *testing.T) {
 		conn := &fakeConn{reads: make(chan fakeRead, 1)}
 		s := newSession(testDevice, conn)
-		if s.SendStartupReceipt(testAddr, t.TempDir(), "") {
+		if s.SendStartupReceipt(t.TempDir(), "") {
 			t.Fatal("reported receipt without marker")
 		}
 		if len(conn.snapshotWrites()) != 0 {
 			t.Fatal("sent receipt without marker")
 		}
 	})
+}
+
+func TestRecoverFailedFinalizeRestoresOldVersion(t *testing.T) {
+	runDir := t.TempDir()
+	cacheDir := t.TempDir()
+	writeFile(t, filepath.Join(runDir, configFileName), `{"version":"2.0.0.0","esn":"123"}`)
+	writeFile(t, filepath.Join(cacheDir, finalizeFailName), "boom")
+	writeFile(t, filepath.Join(cacheDir, finalizeParamsName), `{"old_version":"0.9.9.9","config_path":""}`)
+
+	RecoverFailedFinalize(runDir, "", cacheDir)
+
+	cfg := readJSON(t, filepath.Join(runDir, configFileName))
+	if cfg["version"] != "0.9.9.9" {
+		t.Fatalf("version = %v, want 0.9.9.9", cfg["version"])
+	}
+	if cfg["esn"] != "123" {
+		t.Fatalf("esn lost: %v", cfg["esn"])
+	}
 }

@@ -105,17 +105,18 @@ func run() (result error) {
 	logger.Info("CPDC started", "target", buildinfo.Target, "interfaces", interfaces, "display_ip", displayCandidate.IPString(), "device_types", cfg.DeviceTypes)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	startSelfUpdate(ctx, root, *configPath, logger)
+	startSelfUpdate(ctx, root, *configPath, cfg.CachePath, logger)
 	return client.Run(ctx, transport, cpdc, logger)
 }
 
 // startSelfUpdate wires up the self-update listener, startup receipt, and
 // staging cleanup. Failures disable self-update but never stop the main
 // cpd.proto distribution loop.
-func startSelfUpdate(ctx context.Context, root, configPath string, logger *slog.Logger) {
+func startSelfUpdate(ctx context.Context, root, configPath, cachePath string, logger *slog.Logger) {
 	if err := selfupdate.CleanupInstallDir(root); err != nil {
 		logger.Warn("clean self-update staging failed", "error", err)
 	}
+	selfupdate.RecoverFailedFinalize(root, configPath, cachePath)
 
 	runCommand, _ := selfupdate.ParseRunCommand(os.Args)
 	deviceType, err := selfupdate.DetectDeviceType(configPath)
@@ -139,15 +140,14 @@ func startSelfUpdate(ctx context.Context, root, configPath string, logger *slog.
 		Version:    version,
 		RunCommand: runCommand,
 		ConfigPath: configPath,
+		CachePath:  cachePath,
 	}
 	session, err := selfupdate.NewSession(info)
 	if err != nil {
 		logger.Warn("self-update disabled", "reason", "udp_bind", "error", err)
 		return
 	}
-	for _, addr := range selfupdate.ReceiptDestinations() {
-		session.SendStartupReceipt(addr, root, configPath)
-	}
+	session.SendStartupReceipt(root, configPath)
 	go func() {
 		if err := session.Run(ctx); err != nil {
 			logger.Error("self-update session stopped", "error", err)

@@ -234,6 +234,9 @@ func TestWriteFilesStagesBinaryAndParams(t *testing.T) {
 	if params["old_exe"] != exePath {
 		t.Fatalf("params old_exe = %v", params["old_exe"])
 	}
+	if params["old_version"] != "1.2.3.4" {
+		t.Fatalf("params old_version = %v, want 1.2.3.4", params["old_version"])
+	}
 	if params["backup_exe"] != exePath+".9.9.9.9.bak" {
 		t.Fatalf("params backup_exe = %v", params["backup_exe"])
 	}
@@ -342,5 +345,47 @@ func TestWriteFilesFailsWhenInstallFileMissing(t *testing.T) {
 
 	if _, _, err := writeFiles(context.Background(), zipBytes, DeviceInfo{DeviceType: "CCU", RunCommand: []string{"/opt/cpdc/CPDC-CCU"}}, "2.0.0.0"); err == nil {
 		t.Fatal("writeFiles succeeded, want error")
+	}
+}
+
+func TestWriteFilesUsesCachePathForNonExecutables(t *testing.T) {
+	runDir := t.TempDir()
+	cacheDir := t.TempDir()
+	exePath := filepath.Join(runDir, "CPDC-HF")
+	zipBytes := buildPackageZip(t, map[string]string{
+		"MR9360/CPDC-HF":          "BINARY-CONTENT",
+		"MR9360/cpdc_config.json": `{"version":"2.0.0.0"}`,
+	})
+
+	oldExe := executablePath
+	executablePath = func() (string, error) { return exePath, nil }
+	defer func() { executablePath = oldExe }()
+
+	info := DeviceInfo{
+		DeviceType: "MR9360",
+		IP:         "10.0.0.1",
+		RunCommand: []string{"/opt/cpdc/CPDC-HF"},
+		CachePath:  cacheDir,
+	}
+	paramsPath, _, err := writeFiles(context.Background(), zipBytes, info, "2.0.0.0")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if got := readFile(t, filepath.Join(runDir, installDirName, "new_exe")); got != "BINARY-CONTENT" {
+		t.Fatalf("new exe should stay in run dir, got %q", got)
+	}
+	if got := readJSON(t, filepath.Join(cacheDir, receiptMarkerName)); got["version"] != "2.0.0.0" {
+		t.Fatalf("marker should be in cache dir, got %v", got)
+	}
+	if paramsPath != filepath.Join(cacheDir, finalizeParamsName) {
+		t.Fatalf("params path = %q, want %q", paramsPath, filepath.Join(cacheDir, finalizeParamsName))
+	}
+	params := readJSON(t, paramsPath)
+	if params["fail_marker"] != filepath.Join(cacheDir, finalizeFailName) {
+		t.Fatalf("fail_marker = %v", params["fail_marker"])
+	}
+	if params["finalize_log_path"] != filepath.Join(cacheDir, logDirName, "cpdc_restart.log") {
+		t.Fatalf("finalize_log_path = %v", params["finalize_log_path"])
 	}
 }

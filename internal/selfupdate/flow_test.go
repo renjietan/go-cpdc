@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // TestFullUpdateFlow drives a Session through the complete downlink flow:
@@ -24,15 +25,21 @@ func TestFullUpdateFlow(t *testing.T) {
 	oldSpawn := spawnProcess
 	oldExit := exitNow
 	oldInterval := writeOkSendInterval
+	oldWait := waitForFinalizeStarted
+	oldWrite := writeOldExited
 	executablePath = func() (string, error) { return exePath, nil }
 	spawnProcess = func(string, []string) error { return nil }
 	exitNow = func(int) {}
 	writeOkSendInterval = 0
+	waitForFinalizeStarted = func(string, time.Duration) error { return nil }
+	writeOldExited = func(string) {}
 	defer func() {
 		executablePath = oldExe
 		spawnProcess = oldSpawn
 		exitNow = oldExit
 		writeOkSendInterval = oldInterval
+		waitForFinalizeStarted = oldWait
+		writeOldExited = oldWrite
 	}()
 
 	conn := &fakeConn{reads: make(chan fakeRead, 1)}

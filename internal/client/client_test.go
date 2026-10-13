@@ -18,7 +18,7 @@ import (
 )
 
 func TestClientDiscoveryAndSplitAuthentication(t *testing.T) {
-	root, cfg := testConfig(t, []string{"CCU", "Server"})
+	root, cfg := testConfig(t, []string{"CCU", "TEDS"})
 	client := newTestClient(t, root, cfg, nil)
 	now := time.Unix(100, 0)
 	sessionID := testID(10)
@@ -187,7 +187,7 @@ func TestClientNewAuthPreemptsOldTransferAfterDiscovery(t *testing.T) {
 }
 
 func TestClientWaitsForCompleteNewBindingBeforePreemption(t *testing.T) {
-	root, cfg := testConfig(t, []string{"CCU", "Server"})
+	root, cfg := testConfig(t, []string{"CCU", "TEDS"})
 	client := newTestClient(t, root, cfg, nil)
 	now := time.Unix(450, 0)
 	oldSession := testID(53)
@@ -254,7 +254,7 @@ func TestClientParseTimeoutSendsExactlyFiveIdenticalResults(t *testing.T) {
 }
 
 func TestClientAuthenticationWindowExpiresWithoutBinding(t *testing.T) {
-	root, cfg := testConfig(t, []string{"CCU", "Server"})
+	root, cfg := testConfig(t, []string{"CCU", "TEDS"})
 	client := newTestClient(t, root, cfg, nil)
 	now := time.Unix(600, 0)
 	sessionID := testID(70)

@@ -189,7 +189,7 @@ func parseTypes(names []string) ([]cpdv1.DeviceType, error) {
 	seen := make(map[cpdv1.DeviceType]bool, len(names))
 	result := make([]cpdv1.DeviceType, 0, len(names))
 	radioCount := 0
-	server, iec, ccuAudio := false, false, false
+	teds, iec, ccuAudio := false, false, false
 	for _, name := range names {
 		deviceType, ok := DeviceTypeByName(name)
 		if !ok {
@@ -202,7 +202,7 @@ func parseTypes(names []string) ([]cpdv1.DeviceType, error) {
 		result = append(result, deviceType)
 		switch deviceType {
 		case cpdv1.DeviceType_DEVICE_TYPE_SERVER:
-			server = true
+			teds = true
 		case cpdv1.DeviceType_DEVICE_TYPE_IEC:
 			iec = true
 		case cpdv1.DeviceType_DEVICE_TYPE_CCU_AUDIO:
@@ -214,8 +214,8 @@ func parseTypes(names []string) ([]cpdv1.DeviceType, error) {
 			radioCount++
 		}
 	}
-	if server && iec {
-		return nil, errors.New("Server and IEC are mutually exclusive")
+	if teds && iec {
+		return nil, errors.New("TEDS and IEC are mutually exclusive")
 	}
 	if radioCount > 1 {
 		return nil, errors.New("only one radio device type may be configured")
@@ -228,7 +228,7 @@ func parseTypes(names []string) ([]cpdv1.DeviceType, error) {
 
 func DeviceTypeByName(name string) (cpdv1.DeviceType, bool) {
 	value, ok := map[string]cpdv1.DeviceType{
-		"Server":            cpdv1.DeviceType_DEVICE_TYPE_SERVER,
+		"TEDS":              cpdv1.DeviceType_DEVICE_TYPE_SERVER,
 		"HF":                cpdv1.DeviceType_DEVICE_TYPE_HF,
 		"MultiBandRadio":    cpdv1.DeviceType_DEVICE_TYPE_MULTI_BAND_RADIO,
 		"MultibandHandheld": cpdv1.DeviceType_DEVICE_TYPE_MULTI_BAND_HANDHELD,
@@ -243,7 +243,7 @@ func DeviceTypeByName(name string) (cpdv1.DeviceType, bool) {
 
 func DeviceTypeName(deviceType cpdv1.DeviceType) string {
 	return map[cpdv1.DeviceType]string{
-		cpdv1.DeviceType_DEVICE_TYPE_SERVER:              "Server",
+		cpdv1.DeviceType_DEVICE_TYPE_SERVER:              "TEDS",
 		cpdv1.DeviceType_DEVICE_TYPE_HF:                  "HF",
 		cpdv1.DeviceType_DEVICE_TYPE_MULTI_BAND_RADIO:    "MultiBandRadio",
 		cpdv1.DeviceType_DEVICE_TYPE_MULTI_BAND_HANDHELD: "MultibandHandheld",

@@ -220,6 +220,33 @@ func (t *Transport) refreshBroadcasts() error {
 	return nil
 }
 
+// Refresh re-enumerates eligible broadcast interfaces and rebuilds the send
+// pool only when the candidate set changed. It returns the current sorted
+// candidates, or an error if enumeration or pool rebuild fails.
+func (t *Transport) Refresh() ([]Candidate, error) {
+	t.writeMu.Lock()
+	defer t.writeMu.Unlock()
+	if t.selectCandidates == nil || t.openSender == nil {
+		return nil, errors.New("UDP broadcast refresh is not configured")
+	}
+	candidates, err := t.selectCandidates(t.requestedInterface)
+	if err != nil {
+		return nil, err
+	}
+	if !candidatesChanged(candidates, t.broadcasts) {
+		return candidates, nil
+	}
+	refreshed, err := t.openBroadcasts(candidates)
+	if err != nil {
+		return nil, err
+	}
+	old := t.broadcasts
+	t.broadcasts = refreshed
+	closeBroadcasts(old)
+	slog.Info("UDP broadcast senders refreshed", "interfaces", len(refreshed))
+	return candidates, nil
+}
+
 func (t *Transport) pruneFailedBroadcasts(failed []string) {
 	if len(failed) == 0 {
 		return
@@ -243,6 +270,21 @@ func (t *Transport) pruneFailedBroadcasts(failed []string) {
 
 func candidateKey(candidate Candidate) string {
 	return fmt.Sprintf("%d|%s|%s", candidate.Index, candidate.Name, candidate.IPString())
+}
+
+func candidatesChanged(candidates []Candidate, senders []broadcastSender) bool {
+	if len(candidates) != len(senders) {
+		return true
+	}
+	for i := range candidates {
+		sender := senders[i]
+		if candidates[i].Index != sender.candidate.Index ||
+			candidates[i].Name != sender.candidate.Name ||
+			!candidates[i].IP.Equal(sender.candidate.IP) {
+			return true
+		}
+	}
+	return false
 }
 
 func writeCopies(datagram []byte, targets []sendTarget) (writeReport, error) {

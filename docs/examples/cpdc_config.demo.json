@@ -8,7 +8,7 @@
     "VehInter": ""
   },
   "supportedTypes": [
-    "Server",
+    "TEDS",
     "HF",
     "MultiBandRadio",
     "MultibandHandheld",

@@ -11,8 +11,11 @@ import (
 )
 
 const (
-	finalizeParamsName = "finalize_params.json"
-	finalizeFailName   = "finalize_fail"
+	finalizeParamsName         = "finalize_params.json"
+	finalizeFailName           = "finalize_fail"
+	finalizeStartedName        = "finalize_started"
+	oldExitedName              = "old_exited"
+	oldExitedWriteErrorLogName = "old_exited_write_error.log"
 )
 
 const (
@@ -33,6 +36,9 @@ type FinalizeParams struct {
 	LogPath         string   `json:"log_path"`
 	FinalizeLogPath string   `json:"finalize_log_path"`
 	FailMarker      string   `json:"fail_marker"`
+	DataDir         string   `json:"data_dir"`
+	OldVersion      string   `json:"old_version"`
+	ConfigPath      string   `json:"config_path"`
 }
 
 // LoadFinalizeParams reads and decodes the finalize parameter file.
@@ -48,21 +54,29 @@ func LoadFinalizeParams(path string) (FinalizeParams, error) {
 	return params, nil
 }
 
+func finalizeFailReason(code, detail string) string {
+	if detail == "" {
+		return code
+	}
+	return code + ":" + detail
+}
+
 // RunFinalize waits for the old process to exit, atomically swaps the new
 // executable into place, starts the new process, and cleans up. On failure it
 // writes a fail marker and rolls back to the old executable.
 func RunFinalize(paramsPath string) error {
 	params, err := LoadFinalizeParams(paramsPath)
 	if err != nil {
+		logFinalizeLoadParamsError(paramsPath, err)
 		return fmt.Errorf("load finalize params: %w", err)
 	}
 	if params.OldExe == "" || params.NewExe == "" || params.BackupExe == "" || len(params.RunCommand) == 0 {
-		return errors.New("invalid finalize params")
+		return failFinalizeWithoutLog(params, finalizeFailReason("finalize_invalid_params", ""))
 	}
 
 	logFile, err := os.OpenFile(params.FinalizeLogPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
 	if err != nil {
-		return fmt.Errorf("open finalize log: %w", err)
+		return failFinalizeWithoutLog(params, finalizeFailReason("finalize_self_log_fail", params.FinalizeLogPath))
 	}
 	defer logFile.Close()
 	logf := func(format string, args ...any) {
@@ -70,54 +84,155 @@ func RunFinalize(paramsPath string) error {
 	}
 	logf("finalize start old=%s new=%s backup=%s", params.OldExe, params.NewExe, params.BackupExe)
 
-	if err := waitForProcessExit(params.OldPID, finalizeWaitTimeout); err != nil {
+	// 通知旧进程 finalize 已启动（旧进程最多等 3 秒）。
+	_ = writeFinalizeStarted(params.DataDir)
+
+	if err := waitForOldExit(params); err != nil {
 		logf("old process still alive: %v; terminating", err)
 		_ = terminateProcess(params.OldPID)
 		if err := waitForProcessExit(params.OldPID, time.Second); err != nil {
-			return failFinalize(params, logFile, logf, fmt.Errorf("terminate old process: %w", err))
+			return failFinalize(params, logFile, logf, finalizeFailReason("finalize_terminate_fail", fmt.Sprintf("%d:%v", params.OldPID, err)))
 		}
 	}
 
 	if err := renameWithRetry(params.OldExe, params.BackupExe); err != nil {
-		return failFinalize(params, logFile, logf, fmt.Errorf("rename old exe: %w", err))
+		return failFinalize(params, logFile, logf, finalizeFailReason("finalize_rename_old_fail", params.OldExe+"->"+params.BackupExe+":"+err.Error()))
 	}
 	if err := renameWithRetry(params.NewExe, params.OldExe); err != nil {
-		return failFinalize(params, logFile, logf, fmt.Errorf("rename new exe: %w", err))
+		return failFinalize(params, logFile, logf, finalizeFailReason("finalize_rename_new_fail", params.NewExe+"->"+params.OldExe+":"+err.Error()))
 	}
 
 	newLog, err := os.OpenFile(params.LogPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
 	if err != nil {
-		return failFinalize(params, logFile, logf, fmt.Errorf("open new log: %w", err))
+		return failFinalize(params, logFile, logf, finalizeFailReason("finalize_open_log_fail", params.LogPath+":"+err.Error()))
 	}
 	if err := startDetached(params.RunCommand, newLog); err != nil {
 		_ = newLog.Close()
-		return failFinalize(params, logFile, logf, fmt.Errorf("start new process: %w", err))
+		return failFinalize(params, logFile, logf, finalizeFailReason("finalize_start_new_fail", params.RunCommand[0]+":"+err.Error()))
 	}
 	_ = newLog.Close()
 
-	// Success: remove the backup, params file and any previous fail marker, then
-	// clean the staging directory.
+	// Success: remove the backup, params file, markers and staging directory.
 	_ = os.Remove(params.BackupExe)
 	_ = os.Remove(paramsPath)
 	_ = os.Remove(params.FailMarker)
+	_ = os.Remove(filepath.Join(params.DataDir, finalizeStartedName))
+	_ = os.Remove(filepath.Join(params.DataDir, oldExitedName))
 	_ = CleanupInstallDir(filepath.Dir(params.OldExe))
 	logf("finalize ok")
 	return nil
 }
 
-func failFinalize(params FinalizeParams, logFile *os.File, logf func(string, ...any), cause error) error {
-	logf("finalize failed: %v", cause)
+func failFinalize(params FinalizeParams, logFile *os.File, logf func(string, ...any), reason string) error {
+	logf("finalize failed: %s", reason)
 	_ = os.MkdirAll(filepath.Dir(params.FailMarker), 0o755)
-	_ = os.WriteFile(params.FailMarker, []byte(cause.Error()), 0o600)
+	_ = os.WriteFile(params.FailMarker, []byte(reason), 0o600)
 
-	// Roll back: put the backup back and start the old executable again. If a
-	// rename already failed, keep going as far as possible.
-	_ = renameWithRetry(params.BackupExe, params.OldExe)
-	oldLog := logFile
-	if oldLog != nil {
-		_ = startDetached(params.RunCommand, oldLog)
+	// 恢复设备 config 的旧版本号，避免旧 exe 以新版本号运行。
+	if params.OldVersion != "" {
+		if err := writeVersionToConfig(params.ConfigPath, filepath.Dir(params.OldExe), params.OldVersion); err != nil {
+			logf("restore old version failed: %v", err)
+		}
 	}
-	return fmt.Errorf("%w: %v", errFinalizeFail, cause)
+
+	_ = renameWithRetry(params.BackupExe, params.OldExe)
+	_ = startDetached(params.RunCommand, logFile)
+	return fmt.Errorf("%w: %s", errFinalizeFail, reason)
+}
+
+func failFinalizeWithoutLog(params FinalizeParams, reason string) error {
+	marker := params.FailMarker
+	if marker == "" && params.DataDir != "" {
+		marker = filepath.Join(params.DataDir, finalizeFailName)
+	}
+	if marker != "" {
+		_ = os.MkdirAll(filepath.Dir(marker), 0o755)
+		_ = os.WriteFile(marker, []byte(reason), 0o600)
+	}
+	_ = renameWithRetry(params.BackupExe, params.OldExe)
+	if len(params.RunCommand) > 0 {
+		_ = startDetached(params.RunCommand, io.Discard)
+	}
+	return fmt.Errorf("%w: %s", errFinalizeFail, reason)
+}
+
+func logFinalizeLoadParamsError(paramsPath string, cause error) {
+	dir := filepath.Dir(paramsPath)
+	_ = os.MkdirAll(filepath.Join(dir, logDirName), 0o755)
+	f, err := os.OpenFile(filepath.Join(dir, logDirName, "cpdc_restart.log"), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	_, _ = fmt.Fprintf(f, "%s [FINALIZE] finalize_load_params_fail: %v\n", time.Now().Format("2006-01-02 15:04:05"), cause)
+}
+
+func writeFinalizeStarted(dataDir string) error {
+	if dataDir == "" {
+		return nil
+	}
+	if err := os.MkdirAll(dataDir, 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(dataDir, finalizeStartedName), []byte("1"), 0o600)
+}
+
+var waitForFinalizeStarted = func(dataDir string, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for {
+		if _, err := os.Stat(filepath.Join(dataDir, finalizeStartedName)); err == nil {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return errors.New("finalize did not start")
+		}
+		time.Sleep(finalizeWaitInterval)
+	}
+}
+
+func waitForOldExit(params FinalizeParams) error {
+	deadline := time.Now().Add(finalizeWaitTimeout)
+	marker := filepath.Join(params.DataDir, oldExitedName)
+	for {
+		if _, err := os.Stat(marker); err == nil {
+			return nil
+		}
+		if !processAlive(params.OldPID) {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return errors.New("process did not exit")
+		}
+		time.Sleep(finalizeWaitInterval)
+	}
+}
+
+var writeOldExited = func(dataDir string) {
+	if dataDir == "" {
+		return
+	}
+	path := filepath.Join(dataDir, oldExitedName)
+	if err := os.WriteFile(path, []byte("1"), 0o600); err != nil {
+		logOldExitedWriteError(dataDir, err)
+	}
+}
+
+func logOldExitedWriteError(dataDir string, cause error) {
+	write := func(dir string) bool {
+		_ = os.MkdirAll(dir, 0o755)
+		f, err := os.OpenFile(filepath.Join(dir, oldExitedWriteErrorLogName), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
+		if err != nil {
+			return false
+		}
+		defer f.Close()
+		_, _ = fmt.Fprintf(f, "%s %v\n", time.Now().Format("2006-01-02 15:04:05"), cause)
+		return true
+	}
+	if !write(filepath.Join(dataDir, logDirName)) {
+		if runDir, err := executableDir(); err == nil {
+			_ = write(filepath.Join(runDir, logDirName))
+		}
+	}
 }
 
 func waitForProcessExit(pid int, timeout time.Duration) error {

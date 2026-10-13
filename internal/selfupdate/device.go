@@ -24,6 +24,16 @@ type DeviceInfo struct {
 	Version    string
 	RunCommand []string
 	ConfigPath string
+	CachePath  string
+}
+
+// resolveDataDir returns the directory where non-executable self-update files
+// are stored: cachePath when set, otherwise the executable directory.
+func resolveDataDir(info DeviceInfo) (string, error) {
+	if info.CachePath != "" {
+		return info.CachePath, nil
+	}
+	return executableDir()
 }
 
 // DetectDeviceType returns the device type encoded in the local

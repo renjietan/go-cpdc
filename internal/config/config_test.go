@@ -15,12 +15,12 @@ import (
 func TestLoadGeneratesAndPersistsESN(t *testing.T) {
 	root := t.TempDir()
 	writeConfig(t, root, map[string]any{
-		"deviceTypes": []string{"CCU", "Server"},
+		"deviceTypes": []string{"CCU", "TEDS"},
 		"esn":         "",
 		"txbzName":    "",
 		"txbzHash":    "",
 		"nodeId":      "",
-		"deviceIds":   map[string]string{"CCU": "", "Server": ""},
+		"deviceIds":   map[string]string{"CCU": "", "TEDS": ""},
 	})
 
 	random := bytes.NewReader(append(make([]byte, 16), bytes.Repeat([]byte{1}, 16)...))
@@ -53,7 +53,7 @@ func TestLoadValidatesDeviceTypeCombinations(t *testing.T) {
 		{name: "unknown", types: []string{"Radar"}},
 		{name: "non-canonical handheld spelling", types: []string{"MultiBandHandheld"}},
 		{name: "duplicate", types: []string{"CCU", "CCU"}},
-		{name: "server and IEC", types: []string{"Server", "IEC"}},
+		{name: "server and IEC", types: []string{"TEDS", "IEC"}},
 		{name: "two radios", types: []string{"MultiBandRadio", "HF"}},
 	}
 	for _, tt := range tests {
@@ -94,7 +94,7 @@ func TestLoadAcceptsStandaloneCCUAudio(t *testing.T) {
 func TestLoadRejectsCCUAudioCombinedWithAnotherType(t *testing.T) {
 	root := t.TempDir()
 	writeConfig(t, root, map[string]any{
-		"deviceTypes": []string{"CCUAudio", "Server"},
+		"deviceTypes": []string{"CCUAudio", "TEDS"},
 		"esn":         strings.Repeat("2", 39),
 		"deviceIds":   map[string]string{},
 	})
@@ -118,12 +118,12 @@ func TestLoadRejectsAllZeroESN(t *testing.T) {
 func TestUpdateSnapshotPreservesIdentityAndUnknownFields(t *testing.T) {
 	root := t.TempDir()
 	writeConfig(t, root, map[string]any{
-		"deviceTypes":  []string{"CCU", "Server"},
+		"deviceTypes":  []string{"CCU", "TEDS"},
 		"esn":          strings.Repeat("7", 39),
 		"txbzName":     "old.zip",
 		"txbzHash":     strings.Repeat("b", 64),
 		"nodeId":       "old-node",
-		"deviceIds":    map[string]string{"CCU": "old-ccu", "Server": "old-server"},
+		"deviceIds":    map[string]string{"CCU": "old-ccu", "TEDS": "old-server"},
 		"operatorNote": "preserve me",
 	})
 
@@ -136,8 +136,8 @@ func TestUpdateSnapshotPreservesIdentityAndUnknownFields(t *testing.T) {
 		TxbzHash: strings.Repeat("a", 64),
 		NodeID:   "nn_vehicle_1",
 		DeviceIDs: map[string]string{
-			"CCU":    "dc_ccu_1",
-			"Server": "dc_server_1",
+			"CCU":  "dc_ccu_1",
+			"TEDS": "dc_teds_1",
 		},
 	})
 	if err != nil {

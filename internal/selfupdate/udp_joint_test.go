@@ -31,9 +31,21 @@ func TestRealUDPJointFlow(t *testing.T) {
 	}
 	defer cpdcConn.Close()
 
+	// 用一个带 SO_BROADCAST 的单播发送 socket 替代真实多网卡枚举，保证回复只发一次、
+	// 测试不依赖真实网络接口。
+	bcast, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4zero, Port: 0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer bcast.Close()
+	if err := enableBroadcast(bcast); err != nil {
+		t.Fatal(err)
+	}
+
 	info := testDevice
 	info.RunCommand = []string{"/opt/cpdc/CPDC-HF"}
 	s := newSession(info, cpdcConn)
+	stubNetwork(t, bcast)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

@@ -46,6 +46,7 @@ func TestFullUpdateFlow(t *testing.T) {
 	info := testDevice
 	info.RunCommand = []string{"/opt/cpdc/CPDC-HF", "--config-path", "/data/user"}
 	s := newSession(info, conn)
+	stubNetwork(t, conn)
 	s.write = writeFiles
 
 	mid := len(zipBytes) / 2
@@ -74,7 +75,6 @@ func TestFullUpdateFlow(t *testing.T) {
 			t.Fatalf("write[%d] = %q, want prefix %q", i, writes[i].data, prefix)
 		}
 	}
-
 
 	if got := readFile(t, filepath.Join(runDir, installDirName, "new_exe")); got != "NEW-BINARY" {
 		t.Fatalf("staged binary = %q", got)
@@ -138,7 +138,6 @@ func TestSessionWriteFailReasonCodes(t *testing.T) {
 		t.Fatalf("last write = %q, want write_fail:unzip_fail", last)
 	}
 }
-
 
 // TestReceiptDestinations verifies the startup receipt broadcast targets.
 func TestReceiptDestinations(t *testing.T) {

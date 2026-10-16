@@ -27,6 +27,15 @@ const (
 
 const readPollInterval = 250 * time.Millisecond
 
+// ipScanCooldown 是成功枚举网卡后的节流窗口：10 秒内多次收到 Scan 只枚举一次。
+const ipScanCooldown = 10 * time.Second
+
+// detectIP 与 makeWriters 是包变量，便于测试替换真实网卡枚举。
+var (
+	detectIP    = detectLocalIP
+	makeWriters = broadcastWriters
+)
+
 // datagramConn is the subset of *net.UDPConn used by Session, allowing tests
 // to inject an in-memory connection.
 type datagramConn interface {
@@ -53,6 +62,9 @@ type Session struct {
 
 	cancelMu      sync.Mutex
 	installCancel *installHandle
+
+	// lastIPScan 是最近一次成功枚举网卡的时间，用于节流。
+	lastIPScan time.Time
 }
 
 // installHandle owns the cancellation function for one in-flight install.
@@ -61,8 +73,8 @@ type installHandle struct {
 }
 
 func NewSession(info DeviceInfo) (*Session, error) {
-	if info.DeviceType == "" || info.IP == "" {
-		return nil, errors.New("device type and IP are required")
+	if info.DeviceType == "" {
+		return nil, errors.New("device type is required")
 	}
 	conn, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4zero, Port: listenPort})
 	if err != nil {
@@ -130,8 +142,6 @@ func broadcastWriters() []datagramConn {
 	fmt.Fprintln(os.Stdout, "[BROADCAST] writers=", len(writers))
 	return writers
 }
-
-
 
 // Run reads downlink commands until ctx is cancelled and dispatches each one.
 func (s *Session) Run(ctx context.Context) error {
@@ -207,7 +217,42 @@ func (s *Session) handle(addr *net.UDPAddr, data []byte) {
 
 func (s *Session) handleScan(addr *net.UDPAddr) {
 	s.Reset()
+	if !s.ensureNetwork() {
+		return
+	}
 	_ = s.send(addr, []byte(scanAck))
+}
+
+// ensureNetwork 在 Scan 时按需枚举网卡（IP + 广播发送 socket），10 秒内成功
+// 枚举过一次则直接复用；失败不计节流、下一个 Scan 重试。返回是否可用。
+func (s *Session) ensureNetwork() bool {
+	if time.Since(s.lastIPScan) < ipScanCooldown {
+		return true
+	}
+	ip, err := detectIP()
+	if err != nil || ip == "" {
+		return false
+	}
+	writers := makeWriters()
+	if len(writers) == 0 {
+		return false
+	}
+	s.closeWriters()
+	s.info.IP = ip
+	s.writers = writers
+	s.lastIPScan = time.Now()
+	return true
+}
+
+// closeWriters 关闭旧的广播发送 socket（保留主监听 socket s.conn），避免重枚举
+// 时泄漏 socket。
+func (s *Session) closeWriters() {
+	for _, w := range s.writers {
+		if w == s.conn {
+			continue
+		}
+		_ = w.Close()
+	}
 }
 
 func (s *Session) handleAuth(addr *net.UDPAddr) {

@@ -129,14 +129,10 @@ func startSelfUpdate(ctx context.Context, root, configPath, cachePath string, lo
 		logger.Warn("self-update disabled", "reason", "version", "error", err)
 		return
 	}
-	ip, err := selfupdate.DetectLocalIP()
-	if err != nil {
-		logger.Warn("self-update disabled", "reason", "local_ip", "error", err)
-		return
-	}
+	// IP 不再在启动时探测：纯懒枚举，收到 Scan 时才枚举网卡并回填 info.IP。
 	info := selfupdate.DeviceInfo{
 		DeviceType: deviceType,
-		IP:         ip,
+		IP:         "",
 		Version:    version,
 		RunCommand: runCommand,
 		ConfigPath: configPath,

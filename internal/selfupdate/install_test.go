@@ -40,10 +40,19 @@ func (o *installOverrides) apply(t *testing.T, exePath string) func() {
 }
 
 func TestFindInstallFile(t *testing.T) {
+	old := platformIsWindows
+	platformIsWindows = false
+	defer func() { platformIsWindows = old }()
+
 	dir := t.TempDir()
 	writeFile(t, filepath.Join(dir, "CPDC-CCU"), "binary")
 	writeFile(t, filepath.Join(dir, "cpdc_config.json"), "{}")
+	writeFile(t, filepath.Join(dir, "cpdc_config.CCU.json"), "{}")
 	writeFile(t, filepath.Join(dir, "ReReadJson.ini"), "x")
+	// 设备上可能多出来的其它文件应被忽略。
+	writeFile(t, filepath.Join(dir, "start.sh"), "sh")
+	writeFile(t, filepath.Join(dir, "cpdc.log"), "log")
+	writeFile(t, filepath.Join(dir, "checksum.txt"), "sum")
 
 	got, err := findInstallFile(dir)
 	if err != nil {
@@ -55,6 +64,10 @@ func TestFindInstallFile(t *testing.T) {
 }
 
 func TestFindInstallFileRejectsMissingAndAmbiguous(t *testing.T) {
+	old := platformIsWindows
+	platformIsWindows = false
+	defer func() { platformIsWindows = old }()
+
 	t.Run("missing", func(t *testing.T) {
 		dir := t.TempDir()
 		writeFile(t, filepath.Join(dir, "cpdc_config.json"), "{}")
@@ -65,11 +78,58 @@ func TestFindInstallFileRejectsMissingAndAmbiguous(t *testing.T) {
 	t.Run("ambiguous", func(t *testing.T) {
 		dir := t.TempDir()
 		writeFile(t, filepath.Join(dir, "CPDC-CCU"), "a")
-		writeFile(t, filepath.Join(dir, "checksum.txt"), "b")
+		writeFile(t, filepath.Join(dir, "CPDC-HF"), "b")
 		if _, err := findInstallFile(dir); err == nil {
 			t.Fatal("findInstallFile succeeded, want error")
 		}
 	})
+}
+
+func TestFindInstallFileWindows(t *testing.T) {
+	old := platformIsWindows
+	platformIsWindows = true
+	defer func() { platformIsWindows = old }()
+
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "CPDC.exe"), "binary")
+	writeFile(t, filepath.Join(dir, "cpdc_config.json"), "{}")
+	writeFile(t, filepath.Join(dir, "start.sh"), "sh")
+	writeFile(t, filepath.Join(dir, "CPDC-CCU"), "not-the-windows-binary")
+
+	got, err := findInstallFile(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "CPDC.exe" {
+		t.Fatalf("install file = %q, want CPDC.exe", got)
+	}
+}
+
+func TestIsInstallFileName(t *testing.T) {
+	// 非 Windows：无后缀 + 大写 CPDC- 前缀。
+	if !isInstallFileName("CPDC-CCU", false) {
+		t.Fatal("CPDC-CCU should match non-Windows")
+	}
+	if isInstallFileName("CPDC-CCU.log", false) {
+		t.Fatal("CPDC-CCU.log should not match")
+	}
+	if isInstallFileName("foo", false) {
+		t.Fatal("foo should not match")
+	}
+	if isInstallFileName("cpdc-ccu", false) {
+		t.Fatal("lowercase cpdc-ccu should not match")
+	}
+
+	// Windows：CPDC 前缀 + .exe 后缀。
+	if !isInstallFileName("CPDC.exe", true) {
+		t.Fatal("CPDC.exe should match Windows")
+	}
+	if isInstallFileName("CPDC-CCU", true) {
+		t.Fatal("no-extension binary should not match Windows")
+	}
+	if isInstallFileName("other.exe", true) {
+		t.Fatal("other.exe should not match Windows")
+	}
 }
 
 func TestKeepTempDir(t *testing.T) {

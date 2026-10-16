@@ -76,6 +76,7 @@ func (c *fakeConn) Close() error { return nil }
 func TestSessionHandleScanResetsAndReplies(t *testing.T) {
 	conn := &fakeConn{reads: make(chan fakeRead, 1)}
 	s := newSession(testDevice, conn)
+	stubNetwork(t, conn)
 	s.assembler.SetHeader(1, 4, 0, "x.zip")
 	s.assembler.Put(1, []byte("data"))
 	s.targetVersion = "1.2.3.4"
@@ -400,7 +401,6 @@ func TestSessionInstallFailureRepliesWriteFail(t *testing.T) {
 	}
 }
 
-
 func TestSessionScanDeletesReceiptMarker(t *testing.T) {
 	runDir := t.TempDir()
 	oldExe := executablePath
@@ -411,6 +411,7 @@ func TestSessionScanDeletesReceiptMarker(t *testing.T) {
 
 	conn := &fakeConn{reads: make(chan fakeRead, 1)}
 	s := newSession(testDevice, conn)
+	stubNetwork(t, conn)
 	s.handle(testAddr, []byte("Scan"))
 
 	if _, err := os.Stat(filepath.Join(runDir, receiptMarkerName)); !os.IsNotExist(err) {
@@ -433,6 +434,15 @@ func assertSingleWrite(t *testing.T, conn *fakeConn, prefix string) {
 	if !bytes.HasPrefix(conn.writes[0].data, []byte(prefix)) {
 		t.Fatalf("write = %q, want prefix %q", conn.writes[0].data, prefix)
 	}
+}
+
+// stubNetwork 替换网卡枚举（IP + 广播 socket）为固定值，使测试不依赖真实网络。
+func stubNetwork(t *testing.T, conn datagramConn) {
+	t.Helper()
+	oldDetect, oldMake := detectIP, makeWriters
+	detectIP = func() (string, error) { return "192.168.1.10", nil }
+	makeWriters = func() []datagramConn { return []datagramConn{conn} }
+	t.Cleanup(func() { detectIP, makeWriters = oldDetect, oldMake })
 }
 
 func fileCommand(crc uint32, packetCount, totalBytes uint32, fileName string) []byte {

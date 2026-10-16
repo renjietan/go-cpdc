@@ -10,6 +10,9 @@ import (
 
 func TestMain(m *testing.M) {
 	receiptSendInterval = 0
+	// 自更新测试默认覆盖嵌入式 Linux 流程（安装文件为无后缀 CPDC-* 二进制）；
+	// Windows 规则由 TestFindInstallFileWindows / TestIsInstallFileName 单独验证。
+	platformIsWindows = false
 	os.Exit(m.Run())
 }
 

@@ -11,6 +11,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"cpdc/internal/fsutil"
@@ -19,10 +20,10 @@ import (
 const (
 	receiptMarkerName   = ".cpdc_update_receipt.json"
 	vehInterHandoffName = "vehinter_handoff"
-	iniFileName       = "ReReadJson.ini"
-	installDirName    = "install_cpdc"
-	logDirName        = "logs"
-	restartScriptName = "restart.sh"
+	iniFileName         = "ReReadJson.ini"
+	installDirName      = "install_cpdc"
+	logDirName          = "logs"
+	restartScriptName   = "restart.sh"
 )
 
 // writeError is a self-update write-phase failure. code is the wire reason code
@@ -314,8 +315,10 @@ func findTypeDir(root, deviceType string) (string, error) {
 	return "", fmt.Errorf("device type directory %q not found", deviceType)
 }
 
-// findInstallFile returns the single file below typeDir whose extension is
-// neither .ini nor .json (case-insensitive). It is the device binary.
+// findInstallFile returns the single install file below typeDir. The install
+// file is identified as a file with no extension whose name starts with the
+// uppercase "CPDC-" prefix; other files the device may carry (log / sh / json /
+// ini / etc.) are ignored.
 func findInstallFile(typeDir string) (string, error) {
 	entries, err := os.ReadDir(typeDir)
 	if err != nil {
@@ -326,19 +329,34 @@ func findInstallFile(typeDir string) (string, error) {
 		if entry.IsDir() {
 			continue
 		}
-		ext := strings.ToLower(filepath.Ext(entry.Name()))
-		if ext == ".ini" || ext == ".json" {
+		name := entry.Name()
+		if !isInstallFileName(name, platformIsWindows) {
 			continue
 		}
 		if found != "" {
-			return "", fmt.Errorf("%w: %s and %s", errInstallFileMultiple, found, entry.Name())
+			return "", fmt.Errorf("%w: %s and %s", errInstallFileMultiple, found, name)
 		}
-		found = entry.Name()
+		found = name
 	}
 	if found == "" {
 		return "", errInstallFileNotFound
 	}
 	return found, nil
+}
+
+// platformIsWindows reports whether the current platform is Windows. It is a
+// package variable so tests can override it.
+var platformIsWindows = runtime.GOOS == "windows"
+
+// isInstallFileName reports whether name matches the install-file naming rule
+// for the given platform:
+//   - non-Windows: no extension and an uppercase "CPDC-" prefix;
+//   - Windows: a "CPDC" prefix with a ".exe" extension.
+func isInstallFileName(name string, isWindows bool) bool {
+	if isWindows {
+		return strings.HasPrefix(name, "CPDC") && strings.HasSuffix(name, ".exe")
+	}
+	return filepath.Ext(name) == "" && strings.HasPrefix(name, "CPDC-")
 }
 
 // readPackageConfig returns ReReadjsonPath from the package's cpdc_config.json.

@@ -38,6 +38,7 @@ type fakeConn struct {
 	writes    []fakeWrite
 	reads     chan fakeRead
 	deadlines []time.Time
+	localIP   net.IP
 }
 
 func (c *fakeConn) WriteToUDP(data []byte, addr *net.UDPAddr) (int, error) {
@@ -72,6 +73,8 @@ func (c *fakeConn) SetReadDeadline(t time.Time) error {
 }
 
 func (c *fakeConn) Close() error { return nil }
+
+func (c *fakeConn) receivedLocalIP() net.IP { return c.localIP }
 
 func TestSessionHandleScanResetsAndReplies(t *testing.T) {
 	conn := &fakeConn{reads: make(chan fakeRead, 1)}
@@ -150,10 +153,30 @@ func TestSessionHandleVersionReadsCurrentVersion(t *testing.T) {
 	}
 }
 
-func TestSessionRepliesToServerPort(t *testing.T) {
+func TestSessionRepliesUnicastToSource(t *testing.T) {
 	conn := &fakeConn{reads: make(chan fakeRead, 1)}
 	s := newSession(testDevice, conn)
 	source := &net.UDPAddr{IP: net.IPv4(192, 168, 1, 20), Port: 54321}
+
+	s.handle(source, []byte("auth"))
+
+	writes := conn.snapshotWrites()
+	if len(writes) != 1 {
+		t.Fatalf("writes = %v", writes)
+	}
+	if writes[0].addr.Port != serverPort || !writes[0].addr.IP.Equal(source.IP) {
+		t.Fatalf("reply destination = %v, want %s:%d", writes[0].addr, source.IP, serverPort)
+	}
+}
+
+func TestSessionRepliesBroadcastWhenCrossSubnet(t *testing.T) {
+	conn := &fakeConn{reads: make(chan fakeRead, 1)}
+	s := newSession(testDevice, conn)
+	s.replyViaBroadcast = true
+	oldOpen := openBroadcastSocket
+	openBroadcastSocket = func(net.IP) (datagramConn, error) { return conn, nil }
+	defer func() { openBroadcastSocket = oldOpen }()
+	source := &net.UDPAddr{IP: net.IPv4(10, 32, 3, 4), Port: 54321}
 
 	s.handle(source, []byte("auth"))
 
@@ -246,7 +269,7 @@ func TestSessionFullTransferValidatesAndInstalls(t *testing.T) {
 	}()
 
 	var installed []byte
-	s.write = func(_ context.Context, data []byte, _ DeviceInfo, _ string) (string, string, error) {
+	s.write = func(_ context.Context, data []byte, _ DeviceInfo, _ string, _ string) (string, string, error) {
 		installed = append([]byte(nil), data...)
 		return "restart.sh", "/tmp", nil
 	}
@@ -377,7 +400,7 @@ func TestSessionInstallFailureRepliesWriteFail(t *testing.T) {
 	conn := &fakeConn{reads: make(chan fakeRead, 1)}
 	s := newSession(testDevice, conn)
 
-	s.write = func(_ context.Context, _ []byte, _ DeviceInfo, _ string) (string, string, error) {
+	s.write = func(_ context.Context, _ []byte, _ DeviceInfo, _ string, _ string) (string, string, error) {
 		return "", "", &writeError{code: "overwrite_binary_open_fail", path: "/tmp/CPDC-HF"}
 	}
 
@@ -436,13 +459,12 @@ func assertSingleWrite(t *testing.T, conn *fakeConn, prefix string) {
 	}
 }
 
-// stubNetwork 替换网卡枚举（IP + 广播 socket）为固定值，使测试不依赖真实网络。
-func stubNetwork(t *testing.T, conn datagramConn) {
+// stubNetwork 替换业务网卡判定为固定 IP，使测试不依赖真实网络。
+func stubNetwork(t *testing.T, _ datagramConn) {
 	t.Helper()
-	oldDetect, oldMake := detectIP, makeWriters
-	detectIP = func() (string, error) { return "192.168.1.10", nil }
-	makeWriters = func() []datagramConn { return []datagramConn{conn} }
-	t.Cleanup(func() { detectIP, makeWriters = oldDetect, oldMake })
+	oldResolver := networkResolver
+	networkResolver = func(*net.UDPAddr, net.IP) (string, bool, error) { return "192.168.1.10", true, nil }
+	t.Cleanup(func() { networkResolver = oldResolver })
 }
 
 func fileCommand(crc uint32, packetCount, totalBytes uint32, fileName string) []byte {

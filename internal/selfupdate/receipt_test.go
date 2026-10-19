@@ -3,6 +3,7 @@ package selfupdate
 import (
 	"bytes"
 	"errors"
+	"net"
 	"os"
 	"path/filepath"
 	"testing"
@@ -18,16 +19,16 @@ func TestMain(m *testing.M) {
 
 func TestReadReceiptMarker(t *testing.T) {
 	runDir := t.TempDir()
-	writeFile(t, filepath.Join(runDir, receiptMarkerName), `{"version":"1.2.3.4","ip":"10.0.0.1"}`)
+	writeFile(t, filepath.Join(runDir, receiptMarkerName), `{"version":"1.2.3.4","ip":"10.0.0.1","cpds_ip":"10.0.0.20"}`)
 
-	if version, ip, ok := readReceiptMarker(runDir); !ok || version != "1.2.3.4" || ip != "10.0.0.1" {
-		t.Fatalf("read = %q, %q, %v", version, ip, ok)
+	if version, ip, cpdsIP, ok := readReceiptMarker(runDir); !ok || version != "1.2.3.4" || ip != "10.0.0.1" || cpdsIP != "10.0.0.20" {
+		t.Fatalf("read = %q, %q, %q, %v", version, ip, cpdsIP, ok)
 	}
-	if _, _, ok := readReceiptMarker(t.TempDir()); ok {
+	if _, _, _, ok := readReceiptMarker(t.TempDir()); ok {
 		t.Fatal("missing marker reported present")
 	}
 	writeFile(t, filepath.Join(runDir, receiptMarkerName), `{`)
-	if _, _, ok := readReceiptMarker(runDir); ok {
+	if _, _, _, ok := readReceiptMarker(runDir); ok {
 		t.Fatal("invalid marker reported present")
 	}
 }
@@ -45,9 +46,10 @@ func TestReceiptError(t *testing.T) {
 }
 
 func TestSendUpdateReceipt(t *testing.T) {
+	destination := &net.UDPAddr{IP: net.IPv4(10, 0, 0, 20), Port: serverPort}
 	t.Run("ok", func(t *testing.T) {
 		conn := &fakeConn{reads: make(chan fakeRead, 1)}
-		if err := sendUpdateReceipt(conn, testDevice, "1.2.3.4", nil); err != nil {
+		if err := sendUpdateReceipt(conn, destination, testDevice, "1.2.3.4", nil); err != nil {
 			t.Fatal(err)
 		}
 		writes := conn.snapshotWrites()
@@ -61,7 +63,7 @@ func TestSendUpdateReceipt(t *testing.T) {
 
 	t.Run("fail", func(t *testing.T) {
 		conn := &fakeConn{reads: make(chan fakeRead, 1)}
-		if err := sendUpdateReceipt(conn, testDevice, "", errVersionMismatch); err != nil {
+		if err := sendUpdateReceipt(conn, destination, testDevice, "", errVersionMismatch); err != nil {
 			t.Fatal(err)
 		}
 		writes := conn.snapshotWrites()
@@ -89,13 +91,16 @@ func TestSendStartupReceipt(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			runDir := t.TempDir()
-			writeFile(t, filepath.Join(runDir, receiptMarkerName), `{"version":"`+tt.markerVersion+`"}`)
+			writeFile(t, filepath.Join(runDir, receiptMarkerName), `{"version":"`+tt.markerVersion+`","cpds_ip":"10.0.0.20"}`)
 			if tt.configJSON != "" {
 				writeFile(t, filepath.Join(runDir, configFileName), tt.configJSON)
 			}
 
 			conn := &fakeConn{reads: make(chan fakeRead, 1)}
 			s := newSession(testDevice, conn)
+			oldResolver := networkResolver
+			networkResolver = func(*net.UDPAddr, net.IP) (string, bool, error) { return "10.0.0.1", true, nil }
+			defer func() { networkResolver = oldResolver }()
 			if !s.SendStartupReceipt(runDir, "") {
 				t.Fatal("SendStartupReceipt reported no receipt")
 			}
@@ -121,6 +126,53 @@ func TestSendStartupReceipt(t *testing.T) {
 		}
 		if len(conn.snapshotWrites()) != 0 {
 			t.Fatal("sent receipt without marker")
+		}
+	})
+
+	t.Run("fallback without cpds ip", func(t *testing.T) {
+		runDir := t.TempDir()
+		writeFile(t, filepath.Join(runDir, receiptMarkerName), `{"version":"1.2.3.4"}`)
+
+		conn := &fakeConn{reads: make(chan fakeRead, 1)}
+		s := newSession(testDevice, conn)
+		// cpds_ip 为空且 ip 为空：广播兜底因业务 IP 非法而放弃发送，但仍删除 marker。
+		if !s.SendStartupReceipt(runDir, "") {
+			t.Fatal("SendStartupReceipt reported no receipt")
+		}
+		if len(conn.snapshotWrites()) != 0 {
+			t.Fatal("sent receipt despite invalid business IP")
+		}
+		if _, err := os.Stat(filepath.Join(runDir, receiptMarkerName)); !os.IsNotExist(err) {
+			t.Fatalf("marker not deleted: %v", err)
+		}
+	})
+
+	t.Run("broadcast when cross subnet", func(t *testing.T) {
+		runDir := t.TempDir()
+		writeFile(t, filepath.Join(runDir, receiptMarkerName), `{"version":"1.2.3.4","ip":"192.168.2.104","cpds_ip":"10.32.3.4"}`)
+		writeFile(t, filepath.Join(runDir, configFileName), `{"version":"1.2.3.4"}`)
+
+		conn := &fakeConn{reads: make(chan fakeRead, 1)}
+		s := newSession(testDevice, conn)
+		oldResolver := networkResolver
+		networkResolver = func(*net.UDPAddr, net.IP) (string, bool, error) { return "192.168.2.104", false, nil }
+		defer func() { networkResolver = oldResolver }()
+		oldOpen := openBroadcastSocket
+		openBroadcastSocket = func(net.IP) (datagramConn, error) { return conn, nil }
+		defer func() { openBroadcastSocket = oldOpen }()
+
+		if !s.SendStartupReceipt(runDir, "") {
+			t.Fatal("SendStartupReceipt reported no receipt")
+		}
+		writes := conn.snapshotWrites()
+		if len(writes) != 3 || !bytes.HasPrefix(writes[0].data, []byte("update_ok:")) {
+			t.Fatalf("writes = %v", writes)
+		}
+		if writes[0].addr.Port != serverPort || !writes[0].addr.IP.Equal(net.IPv4bcast) {
+			t.Fatalf("destination = %v, want broadcast", writes[0].addr)
+		}
+		if _, err := os.Stat(filepath.Join(runDir, receiptMarkerName)); !os.IsNotExist(err) {
+			t.Fatalf("marker not deleted: %v", err)
 		}
 	})
 }

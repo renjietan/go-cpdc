@@ -16,20 +16,21 @@ var (
 )
 
 // readReceiptMarker returns the pending new version, the persisted device IP,
-// and whether a marker file exists below runDir.
-func readReceiptMarker(runDir string) (string, string, bool) {
+// the persisted CPDS address, and whether a marker file exists below runDir.
+func readReceiptMarker(runDir string) (string, string, string, bool) {
 	data, err := os.ReadFile(filepath.Join(runDir, receiptMarkerName))
 	if err != nil {
-		return "", "", false
+		return "", "", "", false
 	}
 	var marker struct {
 		Version string `json:"version"`
 		IP      string `json:"ip"`
+		CpdsIP  string `json:"cpds_ip"`
 	}
 	if err := json.Unmarshal(data, &marker); err != nil {
-		return "", "", false
+		return "", "", "", false
 	}
-	return marker.Version, marker.IP, true
+	return marker.Version, marker.IP, marker.CpdsIP, true
 }
 
 // receiptError returns the receipt outcome error, or nil for update_ok.
@@ -50,16 +51,15 @@ const receiptSendCount = 3
 // package variable so tests can shorten it to zero.
 var receiptSendInterval = time.Second
 
-// sendUpdateReceipt broadcasts update_ok or update_fail to 255.255.255.255:39004
-// three times, one second apart, to tolerate UDP packet loss.
-func sendUpdateReceipt(conn datagramConn, d DeviceInfo, newVersion string, err error) error {
+// sendUpdateReceipt sends update_ok or update_fail to the given destination
+// receiptSendCount times, one second apart, to tolerate UDP packet loss.
+func sendUpdateReceipt(conn datagramConn, destination *net.UDPAddr, d DeviceInfo, newVersion string, err error) error {
 	var data []byte
 	if err != nil {
 		data = encodeUpdateFail(d, err.Error())
 	} else {
 		data = encodeUpdateOk(d, newVersion)
 	}
-	destination := &net.UDPAddr{IP: net.IPv4bcast, Port: serverPort}
 	var lastErr error
 	for i := 0; i < receiptSendCount; i++ {
 		if i > 0 {
@@ -71,15 +71,6 @@ func sendUpdateReceipt(conn datagramConn, d DeviceInfo, newVersion string, err e
 	return lastErr
 }
 
-// ReceiptDestinations returns the broadcast and loopback addresses the startup
-// receipt is sent to.
-func ReceiptDestinations() []*net.UDPAddr {
-	return []*net.UDPAddr{
-		{IP: net.IPv4bcast, Port: serverPort},
-		{IP: net.IPv4(127, 0, 0, 1), Port: serverPort},
-	}
-}
-
 // SendStartupReceipt reads a pending receipt marker and, when present, replies
 // to CPDS and deletes the marker. It reports whether a receipt was sent.
 func (s *Session) SendStartupReceipt(runDir, configPath string) bool {
@@ -87,7 +78,7 @@ func (s *Session) SendStartupReceipt(runDir, configPath string) bool {
 	if s.info.CachePath != "" {
 		dataDir = s.info.CachePath
 	}
-	newVersion, persistedIP, ok := readReceiptMarker(dataDir)
+	newVersion, persistedIP, cpdsIP, ok := readReceiptMarker(dataDir)
 	if !ok {
 		return false
 	}
@@ -95,35 +86,59 @@ func (s *Session) SendStartupReceipt(runDir, configPath string) bool {
 		s.info.IP = persistedIP
 	}
 
-	// VehInter：只有第三方成功拉起后才回 update_ok。
+	// 计算回执结果。
+	var receiptErr error
 	if s.info.DeviceType == "VehInter" {
+		// VehInter：只有第三方成功拉起（有 handoff 标记）才回 update_ok。
 		if !hasVehInterHandoff(dataDir) {
 			return false
 		}
-		for _, writer := range s.writers {
-			_ = sendUpdateReceipt(writer, s.info, newVersion, nil)
+		receiptErr = nil
+	} else {
+		_, configFile, resolveErr := resolveConfigPathsIn(configPath, runDir)
+		currentVersion := ""
+		var versionErr error = resolveErr
+		if resolveErr == nil {
+			currentVersion, versionErr = readVersionFile(configFile)
 		}
-		_ = removeReceiptMarker(dataDir)
-		_ = os.Remove(filepath.Join(dataDir, vehInterHandoffName))
-		return true
+		receiptErr = receiptError(newVersion, currentVersion, versionErr)
+		if reason := readFinalizeFailReason(dataDir); reason != "" {
+			receiptErr = errors.New(reason)
+		}
 	}
 
-	_, configFile, resolveErr := resolveConfigPathsIn(configPath, runDir)
-	currentVersion := ""
-	var versionErr error = resolveErr
-	if resolveErr == nil {
-		currentVersion, versionErr = readVersionFile(configFile)
+	// 发送：CPDS 地址在本地网段时单播；跨网段或地址为空时绑业务卡广播。
+	sent := false
+	if cpdsIP != "" {
+		if dst := net.ParseIP(cpdsIP).To4(); dst != nil {
+			if _, onSubnet, err := networkResolver(&net.UDPAddr{IP: dst}, nil); err == nil && onSubnet {
+				_ = sendUpdateReceipt(s.conn, &net.UDPAddr{IP: dst, Port: serverPort}, s.info, newVersion, receiptErr)
+				sent = true
+			}
+		}
 	}
-	receiptErr := receiptError(newVersion, currentVersion, versionErr)
-	if reason := readFinalizeFailReason(dataDir); reason != "" {
-		receiptErr = errors.New(reason)
-	}
-	for _, writer := range s.writers {
-		_ = sendUpdateReceipt(writer, s.info, newVersion, receiptErr)
+	if !sent {
+		_ = s.sendReceiptBroadcast(persistedIP, newVersion, receiptErr)
 	}
 	_ = removeReceiptMarker(dataDir)
 	_ = os.Remove(filepath.Join(dataDir, finalizeFailName))
+	_ = os.Remove(filepath.Join(dataDir, vehInterHandoffName))
 	return true
+}
+
+// sendReceiptBroadcast 在业务卡上绑一个临时广播 socket，向 255.255.255.255:39004
+// 广播回执（连发 receiptSendCount 次）。仅在 marker 未记录 CPDS 地址时兜底使用。
+func (s *Session) sendReceiptBroadcast(businessIP, newVersion string, receiptErr error) error {
+	ip := net.ParseIP(businessIP).To4()
+	if ip == nil {
+		return errors.New("invalid business IP for receipt")
+	}
+	conn, err := openBroadcastSocket(ip)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	return sendUpdateReceipt(conn, &net.UDPAddr{IP: net.IPv4bcast, Port: serverPort}, s.info, newVersion, receiptErr)
 }
 
 func hasVehInterHandoff(dataDir string) bool {

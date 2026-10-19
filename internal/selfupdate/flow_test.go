@@ -5,7 +5,6 @@ import (
 	"context"
 	"hash/crc32"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 )
@@ -119,7 +118,7 @@ func TestSessionWriteFailReasonCodes(t *testing.T) {
 	zipBytes := buildZip(t)
 	conn := &fakeConn{reads: make(chan fakeRead, 1)}
 	s := newSession(testDevice, conn)
-	s.write = func(_ context.Context, _ []byte, _ DeviceInfo, _ string) (string, string, error) {
+	s.write = func(_ context.Context, _ []byte, _ DeviceInfo, _ string, _ string) (string, string, error) {
 		return "", "", &writeError{code: "unzip_fail"}
 	}
 
@@ -136,22 +135,5 @@ func TestSessionWriteFailReasonCodes(t *testing.T) {
 	last := conn.snapshotWrites()[len(conn.snapshotWrites())-1].data
 	if !bytes.HasPrefix(last, []byte("write_fail:")) || !bytes.HasSuffix(last, []byte("unzip_fail")) {
 		t.Fatalf("last write = %q, want write_fail:unzip_fail", last)
-	}
-}
-
-// TestReceiptDestinations verifies the startup receipt broadcast targets.
-func TestReceiptDestinations(t *testing.T) {
-	destinations := ReceiptDestinations()
-	if len(destinations) != 2 {
-		t.Fatalf("destinations = %v", destinations)
-	}
-	if destinations[0].String() != "255.255.255.255:39004" {
-		t.Fatalf("broadcast = %s", destinations[0])
-	}
-	if destinations[1].String() != "127.0.0.1:39004" {
-		t.Fatalf("loopback = %s", destinations[1])
-	}
-	if strings.Contains(destinations[0].String(), "39003") {
-		t.Fatal("broadcast target wrong port")
 	}
 }

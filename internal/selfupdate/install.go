@@ -19,6 +19,7 @@ import (
 
 const (
 	receiptMarkerName   = ".cpdc_update_receipt.json"
+	writeDoneName       = "write_done"
 	vehInterHandoffName = "vehinter_handoff"
 	iniFileName         = "ReReadJson.ini"
 	installDirName      = "install_cpdc"
@@ -96,7 +97,10 @@ var exitNow = func(code int) { os.Exit(code) }
 // writeFiles performs the whole write phase (before restart). On success it
 // returns the restart script path and the run directory; on failure it returns
 // a *writeError carrying the wire reason code and optional path.
-func writeFiles(ctx context.Context, zipBytes []byte, info DeviceInfo, targetVersion string) (paramsPath, runDir string, err error) {
+//
+// cpdsIP is the CPDS source address that triggered the write; it is persisted
+// into the receipt marker so the post-reboot receipt can be unicast back.
+func writeFiles(ctx context.Context, zipBytes []byte, info DeviceInfo, targetVersion, cpdsIP string) (paramsPath, runDir string, err error) {
 	if err := ctx.Err(); err != nil {
 		return "", "", err
 	}
@@ -152,7 +156,7 @@ func writeFiles(ctx context.Context, zipBytes []byte, info DeviceInfo, targetVer
 	if err := ctx.Err(); err != nil {
 		return "", "", err
 	}
-	if err := writeReceiptMarker(targetVersion, info.IP, dataDir); err != nil {
+	if err := writeReceiptMarker(targetVersion, info.IP, cpdsIP, dataDir); err != nil {
 		return "", "", &writeError{code: "write_marker_fail", path: filepath.Join(dataDir, receiptMarkerName)}
 	}
 	// The update is committed past this point: no more cancellation checks.
@@ -413,12 +417,39 @@ func overwriteINI(typeDir, runDir, reReadjsonPath string) error {
 	return copyIfExists(typeDir, iniFileName, dst, 0o644, "overwrite_ini")
 }
 
-func writeReceiptMarker(newVersion, ip, runDir string) error {
-	data, err := json.Marshal(map[string]string{"version": newVersion, "ip": ip})
+func writeReceiptMarker(newVersion, ip, cpdsIP, runDir string) error {
+	data, err := json.Marshal(map[string]string{"version": newVersion, "ip": ip, "cpds_ip": cpdsIP})
 	if err != nil {
 		return err
 	}
 	return fsutil.AtomicWriteFile(filepath.Join(runDir, receiptMarkerName), data, 0o600)
+}
+
+type writeDone struct {
+	CRC         uint32 `json:"crc"`
+	PacketCount uint32 `json:"packet_count"`
+	TotalBytes  uint32 `json:"total_bytes"`
+	FileName    string `json:"file_name"`
+}
+
+func readWriteDone(dataDir string) (writeDone, bool) {
+	data, err := os.ReadFile(filepath.Join(dataDir, writeDoneName))
+	if err != nil {
+		return writeDone{}, false
+	}
+	var d writeDone
+	if err := json.Unmarshal(data, &d); err != nil {
+		return writeDone{}, false
+	}
+	return d, true
+}
+
+func writeWriteDone(dataDir string, d writeDone) error {
+	data, err := json.Marshal(d)
+	if err != nil {
+		return err
+	}
+	return fsutil.AtomicWriteFile(filepath.Join(dataDir, writeDoneName), data, 0o600)
 }
 
 func removeReceiptMarker(runDir string) error {
@@ -483,4 +514,24 @@ func findFileFold(dir, name string) (string, bool) {
 // CleanupInstallDir removes the restart script staging directory.
 func CleanupInstallDir(runDir string) error {
 	return os.RemoveAll(filepath.Join(runDir, installDirName))
+}
+
+func updateFinalizeParamsFileHeader(paramsPath string, crc, packetCount, totalBytes uint32, fileName string) error {
+	data, err := os.ReadFile(paramsPath)
+	if err != nil {
+		return err
+	}
+	var m map[string]any
+	if err := json.Unmarshal(data, &m); err != nil {
+		return err
+	}
+	m["file_crc"] = crc
+	m["file_packet_count"] = packetCount
+	m["file_total_bytes"] = totalBytes
+	m["file_name"] = fileName
+	out, err := json.Marshal(m)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(paramsPath, out, 0o600)
 }

@@ -263,7 +263,7 @@ func TestWriteFilesStagesBinaryAndParams(t *testing.T) {
 	defer func() { executablePath = oldExe }()
 
 	info := DeviceInfo{DeviceType: "MR9360", IP: "192.168.1.10", RunCommand: []string{"/opt/cpdc/CPDC-HF", "--config-path", "/data/user"}}
-	paramsPath, gotRunDir, err := writeFiles(context.Background(), zipBytes, info, "9.9.9.9")
+	paramsPath, gotRunDir, err := writeFiles(context.Background(), zipBytes, info, "9.9.9.9", "10.0.0.20")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -287,7 +287,7 @@ func TestWriteFilesStagesBinaryAndParams(t *testing.T) {
 		t.Fatalf("ini = %q", got)
 	}
 	marker := readJSON(t, filepath.Join(runDir, receiptMarkerName))
-	if marker["version"] != "9.9.9.9" || marker["ip"] != "192.168.1.10" {
+	if marker["version"] != "9.9.9.9" || marker["ip"] != "192.168.1.10" || marker["cpds_ip"] != "10.0.0.20" {
 		t.Fatalf("marker = %v", marker)
 	}
 	params := readJSON(t, paramsPath)
@@ -312,7 +312,7 @@ func TestWriteFilesMatchesTypeDirCaseInsensitively(t *testing.T) {
 	executablePath = func() (string, error) { return exePath, nil }
 	defer func() { executablePath = oldExe }()
 
-	if _, _, err := writeFiles(context.Background(), zipBytes, DeviceInfo{DeviceType: "CCU", RunCommand: []string{"/opt/cpdc/CPDC-CCU"}}, "2.0.0.0"); err != nil {
+	if _, _, err := writeFiles(context.Background(), zipBytes, DeviceInfo{DeviceType: "CCU", RunCommand: []string{"/opt/cpdc/CPDC-CCU"}}, "2.0.0.0", "10.0.0.20"); err != nil {
 		t.Fatal(err)
 	}
 	if got := readFile(t, filepath.Join(runDir, installDirName, "new_exe")); got != "ccu-binary" {
@@ -330,7 +330,7 @@ func TestWriteFilesWritesVersionIntoExistingConfigWhenPackageLacksConfig(t *test
 	executablePath = func() (string, error) { return exePath, nil }
 	defer func() { executablePath = oldExe }()
 
-	if _, _, err := writeFiles(context.Background(), zipBytes, DeviceInfo{DeviceType: "CCU", RunCommand: []string{"/opt/cpdc/CPDC-CCU"}}, "2.0.0.0"); err != nil {
+	if _, _, err := writeFiles(context.Background(), zipBytes, DeviceInfo{DeviceType: "CCU", RunCommand: []string{"/opt/cpdc/CPDC-CCU"}}, "2.0.0.0", "10.0.0.20"); err != nil {
 		t.Fatal(err)
 	}
 	cfg := readJSON(t, filepath.Join(runDir, configFileName))
@@ -370,7 +370,7 @@ func TestWriteFilesConfigPathDirectoryAndFile(t *testing.T) {
 			defer func() { executablePath = oldExe }()
 
 			info := DeviceInfo{DeviceType: "CCU", ConfigPath: configPath, RunCommand: []string{"/opt/cpdc/CPDC-CCU"}}
-			if _, _, err := writeFiles(context.Background(), zipBytes, info, "2.0.0.0"); err != nil {
+			if _, _, err := writeFiles(context.Background(), zipBytes, info, "2.0.0.0", "10.0.0.20"); err != nil {
 				t.Fatal(err)
 			}
 			if got := readJSON(t, filepath.Join(configDir, tt.wantName))["version"]; got != "2.0.0.0" {
@@ -389,7 +389,7 @@ func TestWriteFilesFailsWhenTypeDirMissing(t *testing.T) {
 	executablePath = func() (string, error) { return exePath, nil }
 	defer func() { executablePath = oldExe }()
 
-	if _, _, err := writeFiles(context.Background(), zipBytes, DeviceInfo{DeviceType: "CCU", RunCommand: []string{"/opt/cpdc/CPDC-CCU"}}, "2.0.0.0"); err == nil {
+	if _, _, err := writeFiles(context.Background(), zipBytes, DeviceInfo{DeviceType: "CCU", RunCommand: []string{"/opt/cpdc/CPDC-CCU"}}, "2.0.0.0", "10.0.0.20"); err == nil {
 		t.Fatal("writeFiles succeeded, want error")
 	}
 }
@@ -403,7 +403,7 @@ func TestWriteFilesFailsWhenInstallFileMissing(t *testing.T) {
 	executablePath = func() (string, error) { return exePath, nil }
 	defer func() { executablePath = oldExe }()
 
-	if _, _, err := writeFiles(context.Background(), zipBytes, DeviceInfo{DeviceType: "CCU", RunCommand: []string{"/opt/cpdc/CPDC-CCU"}}, "2.0.0.0"); err == nil {
+	if _, _, err := writeFiles(context.Background(), zipBytes, DeviceInfo{DeviceType: "CCU", RunCommand: []string{"/opt/cpdc/CPDC-CCU"}}, "2.0.0.0", "10.0.0.20"); err == nil {
 		t.Fatal("writeFiles succeeded, want error")
 	}
 }
@@ -427,7 +427,7 @@ func TestWriteFilesUsesCachePathForNonExecutables(t *testing.T) {
 		RunCommand: []string{"/opt/cpdc/CPDC-HF"},
 		CachePath:  cacheDir,
 	}
-	paramsPath, _, err := writeFiles(context.Background(), zipBytes, info, "2.0.0.0")
+	paramsPath, _, err := writeFiles(context.Background(), zipBytes, info, "2.0.0.0", "10.0.0.20")
 	if err != nil {
 		t.Fatal(err)
 	}

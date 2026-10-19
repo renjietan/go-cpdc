@@ -39,6 +39,10 @@ type FinalizeParams struct {
 	DataDir         string   `json:"data_dir"`
 	OldVersion      string   `json:"old_version"`
 	ConfigPath      string   `json:"config_path"`
+	FileCRC         uint32   `json:"file_crc"`
+	FilePacketCount uint32   `json:"file_packet_count"`
+	FileTotalBytes  uint32   `json:"file_total_bytes"`
+	FileName        string   `json:"file_name"`
 }
 
 // LoadFinalizeParams reads and decodes the finalize parameter file.
@@ -111,6 +115,14 @@ func RunFinalize(paramsPath string) error {
 		return failFinalize(params, logFile, logf, finalizeFailReason("finalize_start_new_fail", params.RunCommand[0]+":"+err.Error()))
 	}
 	_ = newLog.Close()
+
+	// 记录已成功更新二进制，用于重复 write 的幂等。
+	_ = writeWriteDone(params.DataDir, writeDone{
+		CRC:         params.FileCRC,
+		PacketCount: params.FilePacketCount,
+		TotalBytes:  params.FileTotalBytes,
+		FileName:    params.FileName,
+	})
 
 	// Success: remove the backup, params file, markers and staging directory.
 	_ = os.Remove(params.BackupExe)

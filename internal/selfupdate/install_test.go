@@ -190,8 +190,9 @@ func TestUnzipToTempExtractsNestedFiles(t *testing.T) {
 		"MR9360/CPDC-HF":          "binary",
 		"MR9360/cpdc_config.json": `{"version":"1.0.0.0"}`,
 	})
+	stubAssembleTemp(t)
 
-	dir, err := unzipToTemp(zipBytes)
+	dir, err := unzipZipToTemp(writeZipFile(t, zipBytes))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -222,6 +223,15 @@ func buildPackageZip(t *testing.T, files map[string]string) []byte {
 		t.Fatal(err)
 	}
 	return buf.Bytes()
+}
+
+func writeZipFile(t *testing.T, zipBytes []byte) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "install.zip")
+	if err := os.WriteFile(path, zipBytes, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
 }
 
 func readFile(t *testing.T, path string) string {
@@ -261,9 +271,10 @@ func TestWriteFilesStagesBinaryAndParams(t *testing.T) {
 	oldExe := executablePath
 	executablePath = func() (string, error) { return exePath, nil }
 	defer func() { executablePath = oldExe }()
+	stubAssembleTemp(t)
 
 	info := DeviceInfo{DeviceType: "MR9360", IP: "192.168.1.10", RunCommand: []string{"/opt/cpdc/CPDC-HF", "--config-path", "/data/user"}}
-	paramsPath, gotRunDir, err := writeFiles(context.Background(), zipBytes, info, "9.9.9.9", "10.0.0.20")
+	paramsPath, gotRunDir, err := writeFiles(context.Background(), writeZipFile(t, zipBytes), info, "9.9.9.9", "10.0.0.20")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -311,8 +322,9 @@ func TestWriteFilesMatchesTypeDirCaseInsensitively(t *testing.T) {
 	oldExe := executablePath
 	executablePath = func() (string, error) { return exePath, nil }
 	defer func() { executablePath = oldExe }()
+	stubAssembleTemp(t)
 
-	if _, _, err := writeFiles(context.Background(), zipBytes, DeviceInfo{DeviceType: "CCU", RunCommand: []string{"/opt/cpdc/CPDC-CCU"}}, "2.0.0.0", "10.0.0.20"); err != nil {
+	if _, _, err := writeFiles(context.Background(), writeZipFile(t, zipBytes), DeviceInfo{DeviceType: "CCU", RunCommand: []string{"/opt/cpdc/CPDC-CCU"}}, "2.0.0.0", "10.0.0.20"); err != nil {
 		t.Fatal(err)
 	}
 	if got := readFile(t, filepath.Join(runDir, installDirName, "new_exe")); got != "ccu-binary" {
@@ -329,8 +341,9 @@ func TestWriteFilesWritesVersionIntoExistingConfigWhenPackageLacksConfig(t *test
 	oldExe := executablePath
 	executablePath = func() (string, error) { return exePath, nil }
 	defer func() { executablePath = oldExe }()
+	stubAssembleTemp(t)
 
-	if _, _, err := writeFiles(context.Background(), zipBytes, DeviceInfo{DeviceType: "CCU", RunCommand: []string{"/opt/cpdc/CPDC-CCU"}}, "2.0.0.0", "10.0.0.20"); err != nil {
+	if _, _, err := writeFiles(context.Background(), writeZipFile(t, zipBytes), DeviceInfo{DeviceType: "CCU", RunCommand: []string{"/opt/cpdc/CPDC-CCU"}}, "2.0.0.0", "10.0.0.20"); err != nil {
 		t.Fatal(err)
 	}
 	cfg := readJSON(t, filepath.Join(runDir, configFileName))
@@ -368,9 +381,10 @@ func TestWriteFilesConfigPathDirectoryAndFile(t *testing.T) {
 			oldExe := executablePath
 			executablePath = func() (string, error) { return exePath, nil }
 			defer func() { executablePath = oldExe }()
+			stubAssembleTemp(t)
 
 			info := DeviceInfo{DeviceType: "CCU", ConfigPath: configPath, RunCommand: []string{"/opt/cpdc/CPDC-CCU"}}
-			if _, _, err := writeFiles(context.Background(), zipBytes, info, "2.0.0.0", "10.0.0.20"); err != nil {
+			if _, _, err := writeFiles(context.Background(), writeZipFile(t, zipBytes), info, "2.0.0.0", "10.0.0.20"); err != nil {
 				t.Fatal(err)
 			}
 			if got := readJSON(t, filepath.Join(configDir, tt.wantName))["version"]; got != "2.0.0.0" {
@@ -388,8 +402,9 @@ func TestWriteFilesFailsWhenTypeDirMissing(t *testing.T) {
 	oldExe := executablePath
 	executablePath = func() (string, error) { return exePath, nil }
 	defer func() { executablePath = oldExe }()
+	stubAssembleTemp(t)
 
-	if _, _, err := writeFiles(context.Background(), zipBytes, DeviceInfo{DeviceType: "CCU", RunCommand: []string{"/opt/cpdc/CPDC-CCU"}}, "2.0.0.0", "10.0.0.20"); err == nil {
+	if _, _, err := writeFiles(context.Background(), writeZipFile(t, zipBytes), DeviceInfo{DeviceType: "CCU", RunCommand: []string{"/opt/cpdc/CPDC-CCU"}}, "2.0.0.0", "10.0.0.20"); err == nil {
 		t.Fatal("writeFiles succeeded, want error")
 	}
 }
@@ -402,8 +417,9 @@ func TestWriteFilesFailsWhenInstallFileMissing(t *testing.T) {
 	oldExe := executablePath
 	executablePath = func() (string, error) { return exePath, nil }
 	defer func() { executablePath = oldExe }()
+	stubAssembleTemp(t)
 
-	if _, _, err := writeFiles(context.Background(), zipBytes, DeviceInfo{DeviceType: "CCU", RunCommand: []string{"/opt/cpdc/CPDC-CCU"}}, "2.0.0.0", "10.0.0.20"); err == nil {
+	if _, _, err := writeFiles(context.Background(), writeZipFile(t, zipBytes), DeviceInfo{DeviceType: "CCU", RunCommand: []string{"/opt/cpdc/CPDC-CCU"}}, "2.0.0.0", "10.0.0.20"); err == nil {
 		t.Fatal("writeFiles succeeded, want error")
 	}
 }
@@ -420,6 +436,7 @@ func TestWriteFilesUsesCachePathForNonExecutables(t *testing.T) {
 	oldExe := executablePath
 	executablePath = func() (string, error) { return exePath, nil }
 	defer func() { executablePath = oldExe }()
+	stubAssembleTemp(t)
 
 	info := DeviceInfo{
 		DeviceType: "MR9360",
@@ -427,7 +444,7 @@ func TestWriteFilesUsesCachePathForNonExecutables(t *testing.T) {
 		RunCommand: []string{"/opt/cpdc/CPDC-HF"},
 		CachePath:  cacheDir,
 	}
-	paramsPath, _, err := writeFiles(context.Background(), zipBytes, info, "2.0.0.0", "10.0.0.20")
+	paramsPath, _, err := writeFiles(context.Background(), writeZipFile(t, zipBytes), info, "2.0.0.0", "10.0.0.20")
 	if err != nil {
 		t.Fatal(err)
 	}

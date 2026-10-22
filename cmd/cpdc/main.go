@@ -116,6 +116,9 @@ func startSelfUpdate(ctx context.Context, root, configPath, cachePath string, lo
 	if err := selfupdate.CleanupInstallDir(root); err != nil {
 		logger.Warn("clean self-update staging failed", "error", err)
 	}
+	if err := selfupdate.CleanupAssembleTemp(); err != nil {
+		logger.Warn("clean self-update assemble temp failed", "error", err)
+	}
 	selfupdate.RecoverFailedFinalize(root, configPath, cachePath)
 
 	runCommand, _ := selfupdate.ParseRunCommand(os.Args)

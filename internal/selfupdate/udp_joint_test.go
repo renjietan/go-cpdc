@@ -36,6 +36,8 @@ func TestRealUDPJointFlow(t *testing.T) {
 	info.RunCommand = []string{"/opt/cpdc/CPDC-HF"}
 	s := newSession(info, wrapped)
 	stubNetwork(t, wrapped)
+	stubAssembleTemp(t)
+	defer s.assembler.Close()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

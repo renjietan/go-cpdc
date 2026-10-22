@@ -2,7 +2,6 @@ package selfupdate
 
 import (
 	"archive/zip"
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -94,17 +93,24 @@ var spawnProcess = func(name string, args []string) error {
 // exitNow terminates the current process after the replacement is launched.
 var exitNow = func(code int) { os.Exit(code) }
 
-// writeFiles performs the whole write phase (before restart). On success it
-// returns the restart script path and the run directory; on failure it returns
-// a *writeError carrying the wire reason code and optional path.
+// writeFiles performs the whole write phase (before restart). zipPath is the
+// assembled update ZIP temporary file. On success it returns the finalize
+// parameter file path and the run directory; on failure it returns a
+// *writeError carrying the wire reason code and optional path.
 //
 // cpdsIP is the CPDS source address that triggered the write; it is persisted
 // into the receipt marker so the post-reboot receipt can be unicast back.
-func writeFiles(ctx context.Context, zipBytes []byte, info DeviceInfo, targetVersion, cpdsIP string) (paramsPath, runDir string, err error) {
+func writeFiles(ctx context.Context, zipPath string, info DeviceInfo, targetVersion, cpdsIP string) (paramsPath, runDir string, err error) {
 	if err := ctx.Err(); err != nil {
 		return "", "", err
 	}
-	temp, err := unzipToTemp(zipBytes)
+	if err := ensureWriteSpace(zipPath); err != nil {
+		if errors.Is(err, fsutil.ErrInsufficientSpace) {
+			return "", "", &writeError{code: "insufficient_space"}
+		}
+		return "", "", &writeError{code: "unzip_fail"}
+	}
+	temp, err := unzipZipToTemp(zipPath)
 	if err != nil {
 		return "", "", &writeError{code: "unzip_fail"}
 	}
@@ -238,21 +244,60 @@ func updateFailReason(err error) string {
 	return errRestartError.Error()
 }
 
-func unzipToTemp(zipBytes []byte) (string, error) {
-	dir, err := os.MkdirTemp("", "cpdc-update-*")
+func unzipZipToTemp(zipPath string) (string, error) {
+	baseDir, err := assembleTempDir()
 	if err != nil {
 		return "", err
 	}
-	reader, err := zip.NewReader(bytes.NewReader(zipBytes), int64(len(zipBytes)))
+	if err := os.MkdirAll(baseDir, 0o755); err != nil {
+		return "", err
+	}
+	dir, err := os.MkdirTemp(baseDir, "cpdc-update-*")
+	if err != nil {
+		return "", err
+	}
+	reader, err := zip.OpenReader(zipPath)
 	if err != nil {
 		_ = os.RemoveAll(dir)
 		return "", fmt.Errorf("open update ZIP: %w", err)
 	}
-	if err := extractZip(reader, dir); err != nil {
+	defer reader.Close()
+	if err := extractZip(&reader.Reader, dir); err != nil {
 		_ = os.RemoveAll(dir)
 		return "", err
 	}
 	return dir, nil
+}
+
+// ensureWriteSpace checks that the executable directory's filesystem has
+// enough free space for extracting the ZIP and staging the new executable.
+func ensureWriteSpace(zipPath string) error {
+	info, err := os.Stat(zipPath)
+	if err != nil {
+		return err
+	}
+	raw := uint64(info.Size())
+	reader, err := zip.OpenReader(zipPath)
+	if err != nil {
+		return err
+	}
+	defer reader.Close()
+	var expanded uint64
+	for _, f := range reader.File {
+		expanded += f.UncompressedSize64
+	}
+	runDir, err := executableDir()
+	if err != nil {
+		return err
+	}
+	required, ok := fsutil.RequiredSpace(raw, expanded, expanded, 1)
+	if !ok {
+		return fsutil.ErrInsufficientSpace
+	}
+	if err := fsutil.EnsureSpace(runDir, required); err != nil {
+		return fsutil.ErrInsufficientSpace
+	}
+	return nil
 }
 
 func extractZip(reader *zip.Reader, dir string) error {
@@ -514,6 +559,16 @@ func findFileFold(dir, name string) (string, bool) {
 // CleanupInstallDir removes the restart script staging directory.
 func CleanupInstallDir(runDir string) error {
 	return os.RemoveAll(filepath.Join(runDir, installDirName))
+}
+
+// CleanupAssembleTemp removes the self-update assembly temporary directory,
+// cleaning any leftover partial ZIPs or extracted packages from a crashed run.
+func CleanupAssembleTemp() error {
+	dir, err := assembleTempDir()
+	if err != nil {
+		return err
+	}
+	return os.RemoveAll(dir)
 }
 
 func updateFinalizeParamsFileHeader(paramsPath string, crc, packetCount, totalBytes uint32, fileName string) error {

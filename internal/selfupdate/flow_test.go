@@ -46,6 +46,8 @@ func TestFullUpdateFlow(t *testing.T) {
 	info.RunCommand = []string{"/opt/cpdc/CPDC-HF", "--config-path", "/data/user"}
 	s := newSession(info, conn)
 	stubNetwork(t, conn)
+	stubAssembleTemp(t)
+	defer s.assembler.Close()
 	s.write = writeFiles
 
 	mid := len(zipBytes) / 2
@@ -118,7 +120,9 @@ func TestSessionWriteFailReasonCodes(t *testing.T) {
 	zipBytes := buildZip(t)
 	conn := &fakeConn{reads: make(chan fakeRead, 1)}
 	s := newSession(testDevice, conn)
-	s.write = func(_ context.Context, _ []byte, _ DeviceInfo, _ string, _ string) (string, string, error) {
+	stubAssembleTemp(t)
+	defer s.assembler.Close()
+	s.write = func(_ context.Context, _ string, _ DeviceInfo, _ string, _ string) (string, string, error) {
 		return "", "", &writeError{code: "unzip_fail"}
 	}
 

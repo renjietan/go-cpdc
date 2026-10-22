@@ -122,6 +122,17 @@ var executableDir = func() (string, error) {
 	return filepath.Dir(executable), nil
 }
 
+// assembleTempDir returns the directory (below the executable directory)
+// used for self-update assembly temporary files and extracted packages.
+// It is a package variable so tests can redirect it to a scratch directory.
+var assembleTempDir = func() (string, error) {
+	dir, err := executableDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "temp"), nil
+}
+
 // resolveConfigPaths maps configPath (the raw --config-path value) to the
 // directory that holds config files and to the active config file path.
 func resolveConfigPaths(configPath string) (configDir, configFile string, err error) {

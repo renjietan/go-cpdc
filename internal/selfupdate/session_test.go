@@ -80,7 +80,7 @@ func TestSessionHandleScanResetsAndReplies(t *testing.T) {
 	conn := &fakeConn{reads: make(chan fakeRead, 1)}
 	s := newSession(testDevice, conn)
 	stubNetwork(t, conn)
-	s.assembler.SetHeader(1, 4, 0, "x.zip")
+	mustSetHeader(t, s.assembler, 1, 4, 0, "x.zip")
 	s.assembler.Put(1, []byte("data"))
 	s.targetVersion = "1.2.3.4"
 
@@ -192,6 +192,8 @@ func TestSessionRepliesBroadcastWhenCrossSubnet(t *testing.T) {
 func TestSessionHandleFileSetsHeaderAndReplies(t *testing.T) {
 	conn := &fakeConn{reads: make(chan fakeRead, 1)}
 	s := newSession(testDevice, conn)
+	stubAssembleTemp(t)
+	defer s.assembler.Close()
 
 	s.handle(testAddr, fileCommand(0x11223344, 2, 100, "pkg.zip"))
 
@@ -204,7 +206,7 @@ func TestSessionHandleFileSetsHeaderAndReplies(t *testing.T) {
 func TestSessionHandlePacketLengthMismatch(t *testing.T) {
 	conn := &fakeConn{reads: make(chan fakeRead, 1)}
 	s := newSession(testDevice, conn)
-	s.assembler.SetHeader(1, 3, 0, "x.zip")
+	mustSetHeader(t, s.assembler, 1, 3, 0, "x.zip")
 
 	payload := []byte("abc")
 	cmd := packetCommand(crc32.ChecksumIEEE(payload), 1, uint32(len(payload)+1), payload)
@@ -219,7 +221,7 @@ func TestSessionHandlePacketLengthMismatch(t *testing.T) {
 func TestSessionHandlePacketCRCMismatch(t *testing.T) {
 	conn := &fakeConn{reads: make(chan fakeRead, 1)}
 	s := newSession(testDevice, conn)
-	s.assembler.SetHeader(1, 3, 0, "x.zip")
+	mustSetHeader(t, s.assembler, 1, 3, 0, "x.zip")
 
 	payload := []byte("abc")
 	cmd := packetCommand(crc32.ChecksumIEEE(payload)^0xFFFFFFFF, 1, uint32(len(payload)), payload)
@@ -234,7 +236,7 @@ func TestSessionHandlePacketCRCMismatch(t *testing.T) {
 func TestSessionHandlePacketDropsOutOfRange(t *testing.T) {
 	conn := &fakeConn{reads: make(chan fakeRead, 1)}
 	s := newSession(testDevice, conn)
-	s.assembler.SetHeader(2, 2, 0, "x.zip")
+	mustSetHeader(t, s.assembler, 2, 2, 0, "x.zip")
 
 	payload := []byte("a")
 	s.handle(testAddr, packetCommand(crc32.ChecksumIEEE(payload), 0, 1, payload))
@@ -268,8 +270,15 @@ func TestSessionFullTransferValidatesAndInstalls(t *testing.T) {
 		writeOldExited = oldWrite
 	}()
 
+	stubAssembleTemp(t)
+	defer s.assembler.Close()
+
 	var installed []byte
-	s.write = func(_ context.Context, data []byte, _ DeviceInfo, _ string, _ string) (string, string, error) {
+	s.write = func(_ context.Context, zipPath string, _ DeviceInfo, _ string, _ string) (string, string, error) {
+		data, err := os.ReadFile(zipPath)
+		if err != nil {
+			return "", "", err
+		}
 		installed = append([]byte(nil), data...)
 		return "restart.sh", "/tmp", nil
 	}
@@ -319,7 +328,7 @@ func TestSessionValidateAndReplyFailures(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			conn := &fakeConn{reads: make(chan fakeRead, 1)}
 			s := newSession(testDevice, conn)
-			s.assembler.SetHeader(1, tt.totalBytes, tt.crc, "x.zip")
+			mustSetHeader(t, s.assembler, 1, tt.totalBytes, tt.crc, "x.zip")
 			s.assembler.Put(1, payload)
 
 			s.handleValid(testAddr, validCommand(tt.crc, 1, uint32(tt.totalBytes), "x.zip"))
@@ -335,7 +344,7 @@ func TestSessionValidateAndReplyFailures(t *testing.T) {
 func TestSessionHandlePacketOutOfOrderTriggersSequenceFail(t *testing.T) {
 	conn := &fakeConn{reads: make(chan fakeRead, 1)}
 	s := newSession(testDevice, conn)
-	s.assembler.SetHeader(3, 3, 0, "x.zip")
+	mustSetHeader(t, s.assembler, 3, 3, 0, "x.zip")
 
 	// Packet 2 arrives before packet 1, so it is not the expected next packet.
 	payload := []byte("b")
@@ -356,7 +365,7 @@ func TestSessionHandlePacketOutOfOrderTriggersSequenceFail(t *testing.T) {
 func TestSessionHandlePacketDuplicateReAcks(t *testing.T) {
 	conn := &fakeConn{reads: make(chan fakeRead, 1)}
 	s := newSession(testDevice, conn)
-	s.assembler.SetHeader(2, 2, 0, "x.zip")
+	mustSetHeader(t, s.assembler, 2, 2, 0, "x.zip")
 
 	payload := []byte("a")
 	s.handle(testAddr, packetCommand(crc32.ChecksumIEEE(payload), 1, 1, payload))
@@ -399,8 +408,10 @@ func TestSessionInstallFailureRepliesWriteFail(t *testing.T) {
 	zipBytes := buildZip(t)
 	conn := &fakeConn{reads: make(chan fakeRead, 1)}
 	s := newSession(testDevice, conn)
+	stubAssembleTemp(t)
+	defer s.assembler.Close()
 
-	s.write = func(_ context.Context, _ []byte, _ DeviceInfo, _ string, _ string) (string, string, error) {
+	s.write = func(_ context.Context, _ string, _ DeviceInfo, _ string, _ string) (string, string, error) {
 		return "", "", &writeError{code: "overwrite_binary_open_fail", path: "/tmp/CPDC-HF"}
 	}
 
@@ -465,6 +476,25 @@ func stubNetwork(t *testing.T, _ datagramConn) {
 	oldResolver := networkResolver
 	networkResolver = func(*net.UDPAddr, net.IP) (string, bool, error) { return "192.168.1.10", true, nil }
 	t.Cleanup(func() { networkResolver = oldResolver })
+}
+
+// stubAssembleTemp 把自更新组装临时目录重定向到测试临时目录，避免测试污染
+// 真实运行目录。
+func stubAssembleTemp(t *testing.T) {
+	t.Helper()
+	dir := t.TempDir()
+	old := assembleTempDir
+	assembleTempDir = func() (string, error) { return dir, nil }
+	t.Cleanup(func() { assembleTempDir = old })
+}
+
+// mustSetHeader 以测试临时目录创建组装临时文件。
+func mustSetHeader(t *testing.T, a *Assembler, packetCount, totalBytes int, crc uint32, fileName string) {
+	t.Helper()
+	if err := a.SetHeader(packetCount, totalBytes, crc, fileName, t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { a.Close() })
 }
 
 func fileCommand(crc uint32, packetCount, totalBytes uint32, fileName string) []byte {

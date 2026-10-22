@@ -22,6 +22,7 @@ const (
 	versionOkPrefix   = "version_ok:"
 	versionFailPrefix = "version_fail:"
 	fileAckPrefix     = "fileAck:"
+	fileFailPrefix    = "file_fail:"
 	packetOkPrefix    = "packet_ok:"
 	packetFailPrefix  = "packet_fail:"
 	validOkPrefix     = "valid_ok:"
@@ -84,6 +85,11 @@ func encodeFileAck(d DeviceInfo, crc uint32, packetCount, totalBytes uint32, fil
 	out = appendUint32(out, packetCount)
 	out = appendUint32(out, totalBytes)
 	return append(out, []byte(fileName)...)
+}
+
+func encodeFileFail(d DeviceInfo, reason string) []byte {
+	out := append([]byte(fileFailPrefix), encodeID(d.DeviceType, d.IP)...)
+	return append(out, []byte(reason)...)
 }
 
 func encodePacketOk(d DeviceInfo, crc uint32, packetNumber, packetLength uint32) []byte {

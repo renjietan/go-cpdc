@@ -2,7 +2,6 @@ package selfupdate
 
 import (
 	"archive/zip"
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -13,6 +12,8 @@ import (
 	"path/filepath"
 	"sync"
 	"time"
+
+	"cpdc/internal/fsutil"
 )
 
 const (
@@ -44,15 +45,19 @@ type datagramConn interface {
 // without real sockets.
 type Session struct {
 	conn      datagramConn
+	// broadcastConn 是跨网段广播回复复用的 socket，绑定到 s.info.IP 确定的业务
+	// 网卡；收到 Scan 定型网卡后按需创建，下一次 Scan 或进程退出时关闭。
+	broadcastConn datagramConn
 	info      DeviceInfo
 	assembler *Assembler
 	// targetVersion is the version carried by the most recent "version:"
 	// command. It is consumed by the install phase and cleared on Reset.
 	targetVersion string
 	// write performs the write phase and returns the finalize parameter file
-	// path and run directory. The final argument is the CPDS source address,
-	// which is persisted into the receipt marker for the post-reboot receipt.
-	write func(context.Context, []byte, DeviceInfo, string, string) (string, string, error)
+	// path and run directory. The first string argument is the assembled ZIP
+	// temporary file path; the final argument is the CPDS source address, which
+	// is persisted into the receipt marker for the post-reboot receipt.
+	write func(context.Context, string, DeviceInfo, string, string) (string, string, error)
 
 	cancelMu      sync.Mutex
 	installCancel *installHandle
@@ -95,6 +100,7 @@ func newSession(info DeviceInfo, conn datagramConn) *Session {
 // Run reads downlink commands until ctx is cancelled and dispatches each one.
 func (s *Session) Run(ctx context.Context) error {
 	defer func() {
+		s.closeBroadcastSocket()
 		_ = s.conn.Close()
 		logConnClose(s.info)
 	}()
@@ -127,6 +133,7 @@ func (s *Session) Run(ctx context.Context) error {
 // state. Scan triggers Reset before replying Scan:success.
 func (s *Session) Reset() {
 	s.cancelInstall()
+	s.closeBroadcastSocket()
 	s.assembler.Reset()
 	s.targetVersion = ""
 	if dataDir, err := resolveDataDir(s.info); err == nil {
@@ -213,7 +220,22 @@ func (s *Session) handleFile(addr *net.UDPAddr, data []byte) {
 	if err != nil {
 		return
 	}
-	s.assembler.SetHeader(int(packetCount), int(totalBytes), crc, fileName)
+	tempDir, err := assembleTempDir()
+	if err != nil {
+		_ = s.send(addr, encodeFileFail(s.info, "executable_path_fail"))
+		return
+	}
+	required, ok := fsutil.RequiredSpace(uint64(totalBytes), 0, 0, 1)
+	// 空间检查针对 temp 的父目录（运行目录，必然存在且与 temp 同文件系统），
+	// 避免 Windows 下对不存在路径 statfs 失败。
+	if !ok || fsutil.EnsureSpace(filepath.Dir(tempDir), required) != nil {
+		_ = s.send(addr, encodeFileFail(s.info, "insufficient_space"))
+		return
+	}
+	if err := s.assembler.SetHeader(int(packetCount), int(totalBytes), crc, fileName, tempDir); err != nil {
+		_ = s.send(addr, encodeFileFail(s.info, "insufficient_space"))
+		return
+	}
 	_ = s.send(addr, encodeFileAck(s.info, crc, packetCount, totalBytes, fileName))
 }
 
@@ -245,7 +267,10 @@ func (s *Session) handlePacket(addr *net.UDPAddr, data []byte) {
 		_ = s.send(addr, encodePacketFail(s.info, crc, packetNumber, packetLength, "crc"))
 		return
 	}
-	s.assembler.Put(int(packetNumber), payload)
+	if err := s.assembler.Put(int(packetNumber), payload); err != nil {
+		_ = s.send(addr, encodePacketFail(s.info, crc, packetNumber, packetLength, "insufficient_space"))
+		return
+	}
 	s.assembler.RecordReceived()
 	_ = s.send(addr, encodePacketOk(s.info, crc, packetNumber, packetLength))
 }
@@ -263,7 +288,7 @@ func (s *Session) handleValid(addr *net.UDPAddr, data []byte) {
 		_ = s.send(addr, encodeValidFail(s.info, err.Error()))
 		return
 	}
-	if err := validateZip(s.assembler.Bytes()); err != nil {
+	if err := validateZipFile(s.assembler.Path()); err != nil {
 		_ = s.send(addr, encodeValidFail(s.info, ErrInvalidZip.Error()))
 		return
 	}
@@ -311,7 +336,7 @@ func (s *Session) handleWrite(addr *net.UDPAddr, data []byte) {
 		_ = s.send(addr, encodeWriteFail(s.info, "executable_path_fail"))
 		return
 	}
-	paramsPath, _, err := s.write(context.Background(), s.assembler.Bytes(), s.info, s.targetVersion, addr.IP.String())
+	paramsPath, _, err := s.write(context.Background(), s.assembler.Path(), s.info, s.targetVersion, addr.IP.String())
 	if err != nil {
 		_ = s.send(addr, encodeWriteFail(s.info, writeFailReason(err)))
 		return
@@ -419,19 +444,14 @@ var openBroadcastSocket = func(ip net.IP) (datagramConn, error) {
 	return &udpConn{conn: conn}, nil
 }
 
-// broadcastReply 在业务网卡上绑一个临时广播 socket，向 255.255.255.255:39004
-// 广播一次。跨网段设备通常没有默认路由，从 0.0.0.0 广播会 ENETUNREACH，
-// 必须绑到具体网卡 IP 才能走该网卡的广播。
+// broadcastReply 复用业务网卡的广播 socket，向 255.255.255.255:39004 广播。
+// 跨网段设备通常没有默认路由，从 0.0.0.0 广播会 ENETUNREACH，必须绑到
+// 具体网卡 IP 才能走该网卡的广播；该 socket 由 broadcastSocket 惰性创建并复用。
 func (s *Session) broadcastReply(data []byte) error {
-	ip := net.ParseIP(s.info.IP).To4()
-	if ip == nil {
-		return errors.New("invalid business IP for broadcast reply")
-	}
-	conn, err := openBroadcastSocket(ip)
+	conn, err := s.broadcastSocket()
 	if err != nil {
 		return err
 	}
-	defer conn.Close()
 	destination := &net.UDPAddr{IP: net.IPv4bcast, Port: serverPort}
 	logDump("TX", destination.IP.String(), data, s.assembler.packetCount)
 	n, err := conn.WriteToUDP(data, destination)
@@ -446,13 +466,39 @@ func (s *Session) broadcastReply(data []byte) error {
 	return nil
 }
 
-// validateZip reports whether data can be fully read back as a ZIP archive,
-// which verifies the central directory and each entry's checksum.
-func validateZip(data []byte) error {
-	reader, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+// broadcastSocket 返回复用的跨网段广播 socket；不存在时按当前业务网卡创建。
+func (s *Session) broadcastSocket() (datagramConn, error) {
+	if s.broadcastConn != nil {
+		return s.broadcastConn, nil
+	}
+	ip := net.ParseIP(s.info.IP).To4()
+	if ip == nil {
+		return nil, errors.New("invalid business IP for broadcast reply")
+	}
+	conn, err := openBroadcastSocket(ip)
+	if err != nil {
+		return nil, err
+	}
+	s.broadcastConn = conn
+	return conn, nil
+}
+
+// closeBroadcastSocket 关闭并释放复用的广播 socket。
+func (s *Session) closeBroadcastSocket() {
+	if s.broadcastConn != nil {
+		_ = s.broadcastConn.Close()
+		s.broadcastConn = nil
+	}
+}
+
+// validateZipFile reports whether the file at path can be fully read back as a
+// ZIP archive, which verifies the central directory and each entry's checksum.
+func validateZipFile(path string) error {
+	reader, err := zip.OpenReader(path)
 	if err != nil {
 		return err
 	}
+	defer reader.Close()
 	for _, file := range reader.File {
 		rc, err := file.Open()
 		if err != nil {

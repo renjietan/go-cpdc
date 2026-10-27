@@ -12,7 +12,15 @@ import (
 	"testing"
 
 	cpdv1 "cpdc/gen/cpd/v1"
+	"cpdc/internal/output"
 )
+
+func redirectCCUUpdateDir(t *testing.T, root string) {
+	t.Helper()
+	old := output.CCUAbsoluteUpdateDir
+	output.CCUAbsoluteUpdateDir = filepath.Join(filepath.Dir(filepath.Dir(root)), "update")
+	t.Cleanup(func() { output.CCUAbsoluteUpdateDir = old })
+}
 
 func TestClientTestConfigKeepsParentOutputsOutOfSystemTempRoot(t *testing.T) {
 	root, _ := testConfig(t, []string{"CCU"})
@@ -24,6 +32,7 @@ func TestClientTestConfigKeepsParentOutputsOutOfSystemTempRoot(t *testing.T) {
 
 func TestParserWritesOutputsAndSuccessSnapshot(t *testing.T) {
 	root, cfg := testConfig(t, []string{"CCU"})
+	redirectCCUUpdateDir(t, root)
 	packagePath, expanded := writeParserPackage(t)
 	hash := sha256.Sum256([]byte("source identity"))
 	outcome := NewParser().Parse(ParseRequest{
@@ -52,6 +61,7 @@ func TestParserWritesOutputsAndSuccessSnapshot(t *testing.T) {
 
 func TestParserSyncsAfterOutputsAndSnapshot(t *testing.T) {
 	root, cfg := testConfig(t, []string{"CCU"})
+	redirectCCUUpdateDir(t, root)
 	packagePath, expanded := writeParserPackage(t)
 	hash := sha256.Sum256([]byte("source identity"))
 	parser := NewParser()

@@ -11,13 +11,19 @@ import (
 	"cpdc/internal/packagezip"
 )
 
+// CCUAbsoluteUpdateDir is the fixed absolute directory CPDC-CCU publishes its
+// configuration to. It is a variable so tests can redirect it to a temporary
+// directory.
+var CCUAbsoluteUpdateDir = "/home/update"
+
 // ccuUpdateDir resolves the published configuration directory: CCU writes to
-// ../../update relative to the executable directory, CCUAudio to ../update.
+// the absolute CCUAbsoluteUpdateDir, CCUAudio to ../update relative to the
+// executable directory.
 func ccuUpdateDir(root string, deviceType cpdv1.DeviceType) string {
 	if deviceType == cpdv1.DeviceType_DEVICE_TYPE_CCU_AUDIO {
 		return filepath.Join(filepath.Dir(root), "update")
 	}
-	return filepath.Join(filepath.Dir(filepath.Dir(root)), "update")
+	return CCUAbsoluteUpdateDir
 }
 
 func writeCCU(ctx context.Context, root string, pkg *packagezip.Package, device *packagezip.Device, deviceType cpdv1.DeviceType) error {

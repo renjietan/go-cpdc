@@ -94,6 +94,9 @@ func TestProcessCCUPublishesToUpdateAndRecursivelyClearsTxbzCCU(t *testing.T) {
 		t.Fatal(err)
 	}
 	update := filepath.Join(filepath.Dir(filepath.Dir(root)), "update")
+	oldUpdateDir := CCUAbsoluteUpdateDir
+	CCUAbsoluteUpdateDir = update
+	defer func() { CCUAbsoluteUpdateDir = oldUpdateDir }()
 	if err := os.MkdirAll(filepath.Join(update, "keep"), 0o755); err != nil {
 		t.Fatal(err)
 	}

@@ -4,7 +4,7 @@
 # Usage: /CPDC/bin/start.sh
 #
 
-BASE_DIR="/CPDC/bin"
+BASE_DIR="/userdata/TEDS/service_set"
 BIN_FILE="$BASE_DIR/CPDC-IEC"
 PID_FILE="$BASE_DIR/cpdc-iec.pid"
 LOG_FILE="$BASE_DIR/cpdc.log"

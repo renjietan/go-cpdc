@@ -4,7 +4,7 @@
 # Usage: /CPDC/bin/stop.sh
 #
 
-BASE_DIR="/CPDC/bin"
+BASE_DIR="/userdata/TEDS/service_set"
 PID_FILE="$BASE_DIR/cpdc-iec.pid"
 
 if [ ! -f "$PID_FILE" ]; then

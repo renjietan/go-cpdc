@@ -1,0 +1,17 @@
+{
+  "deviceTypes": [
+    "HF"
+  ],
+  "esn": "",
+  "supportedTypes": [
+    "TEDS",
+    "HF",
+    "MultiBandRadio",
+    "MultibandHandheld",
+    "CCU",
+    "CCUAudio",
+    "IEC",
+    "SmallHandheld",
+    "VehInter"
+  ]
+}

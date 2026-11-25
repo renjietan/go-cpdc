@@ -1,0 +1,24 @@
+{
+  "deviceTypes": ["VehInter"],
+  "esn": "",
+  "txbzName": "",
+  "txbzHash": "",
+  "nodeId": "",
+  "deviceIds": {
+    "VehInter": ""
+  },
+  "ReReadjsonPath": "/data/local/user/ReReadJson.ini",
+  "tarPath": "/data/local/user",
+  "cachePath": "/data/local/user",
+  "supportedTypes": [
+    "TEDS",
+    "HF",
+    "MultiBandRadio",
+    "MultibandHandheld",
+    "CCU",
+    "CCUAudio",
+    "IEC",
+    "SmallHandheld",
+    "VehInter"
+  ]
+}

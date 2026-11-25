@@ -1,0 +1,23 @@
+{
+  "deviceIds": {
+    "MultiBandRadio": "dc_MMR200_1278001"
+  },
+  "deviceTypes": [
+    "MultiBandRadio"
+  ],
+  "esn": "230149744053030934771630093302401085279",
+  "nodeId": "nn_hytis_4204306",
+  "supportedTypes": [
+    "TEDS",
+    "HF",
+    "MultiBandRadio",
+    "MultibandHandheld",
+    "CCU",
+    "CCUAudio",
+    "IEC",
+    "SmallHandheld",
+    "VehInter"
+  ],
+  "txbzHash": "34b05a65432b7766fbb29de827bc177a13e213726e6c8d7e12b6a160712fc581",
+  "txbzName": "txbz_json_UAE_20261024154811.zip"
+}

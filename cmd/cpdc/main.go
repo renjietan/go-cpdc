@@ -43,7 +43,6 @@ func run() (result error) {
 	}
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: level}))
 	slog.SetDefault(logger)
-
 	if *selfUpdateFinalize {
 		if err := selfupdate.RunFinalize(*finalizeParams); err != nil {
 			logger.Error("self-update finalize failed", "error", err)
@@ -106,6 +105,9 @@ func run() (result error) {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	startSelfUpdate(ctx, root, *configPath, cfg.CachePath, logger)
+	envs := config.Init(configPath, logLevel, interfaceName)
+	envsLogStr := fmt.Sprintf("interface: %v, config-path: %v, loglevel: %v \n", envs.Interface, envs.ConfigPath, envs.LogLevel)
+	slog.Info(envsLogStr)
 	return client.Run(ctx, transport, cpdc, logger)
 }
 

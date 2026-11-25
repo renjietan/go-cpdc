@@ -3,6 +3,7 @@ package selfupdate
 import (
 	"archive/zip"
 	"context"
+	"cpdc/internal/config"
 	"errors"
 	"fmt"
 	"hash/crc32"
@@ -44,12 +45,12 @@ type datagramConn interface {
 // packets. The UDP read loop is thin so the command handling can be tested
 // without real sockets.
 type Session struct {
-	conn      datagramConn
+	conn datagramConn
 	// broadcastConn 是跨网段广播回复复用的 socket，绑定到 s.info.IP 确定的业务
 	// 网卡；收到 Scan 定型网卡后按需创建，下一次 Scan 或进程退出时关闭。
 	broadcastConn datagramConn
-	info      DeviceInfo
-	assembler *Assembler
+	info          DeviceInfo
+	assembler     *Assembler
 	// targetVersion is the version carried by the most recent "version:"
 	// command. It is consumed by the install phase and cleared on Reset.
 	targetVersion string
@@ -240,6 +241,10 @@ func (s *Session) handleFile(addr *net.UDPAddr, data []byte) {
 }
 
 func (s *Session) handlePacket(addr *net.UDPAddr, data []byte) {
+	var start time.Time
+	if config.GetEnv().LogLevel == "debug" {
+		start = time.Now()
+	}
 	crc, packetNumber, packetLength, payload, err := parsePacket(data)
 	if err != nil {
 		return
@@ -273,6 +278,9 @@ func (s *Session) handlePacket(addr *net.UDPAddr, data []byte) {
 	}
 	s.assembler.RecordReceived()
 	_ = s.send(addr, encodePacketOk(s.info, crc, packetNumber, packetLength))
+	if config.GetEnv().LogLevel == "debug" {
+		fmt.Println("【总耗时】", time.Since(start))
+	}
 }
 
 func (s *Session) handleValid(addr *net.UDPAddr, data []byte) {

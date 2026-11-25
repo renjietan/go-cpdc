@@ -2,6 +2,7 @@ package selfupdate
 
 import (
 	"bytes"
+	"cpdc/internal/config"
 	"encoding/binary"
 	"fmt"
 	"net"
@@ -235,9 +236,13 @@ func renderLog(direction, ip string, data []byte, totalPackets int) string {
 		_, fields = dumpReply(data, totalPackets)
 	}
 
-	title := "发送"
-	if direction == "RX" {
+	title := ""
+	if direction == "TX" {
+		title = fmt.Sprintf("发送 - \"%s\"", ip)
+	} else if direction == "RX" {
 		title = fmt.Sprintf("接收 - \"%s\"", ip)
+	} else {
+		title = "未知"
 	}
 
 	var b strings.Builder
@@ -252,6 +257,9 @@ func renderLog(direction, ip string, data []byte, totalPackets int) string {
 
 // logDump prints one downlink command or uplink reply to stdout.
 func logDump(direction, ip string, data []byte, totalPackets int) {
+	if config.GetEnv().LogLevel != "debug" {
+		return
+	}
 	fmt.Fprint(os.Stdout, renderLog(direction, ip, data, totalPackets))
 }
 
